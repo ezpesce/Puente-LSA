@@ -203,7 +203,11 @@ fun TranslatorScreen(
                         onClick = onOpenLanguageSheet
                     )
                     StatusPill(
-                        label = if (isEffectiveOffline) "Offline" else "Gemini",
+                        label = when {
+                            isEffectiveOffline -> "Offline"
+                            requiresFirebaseAiNotice -> "Local"
+                            else -> "Gemini"
+                        },
                         isOffline = isEffectiveOffline,
                         onClick = onToggleOfflineMode
                     )

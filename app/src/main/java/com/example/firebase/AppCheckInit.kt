@@ -16,10 +16,25 @@ private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
 
+fun isFirebaseAvailable(context: Context): Boolean {
+    return try {
+        val appContext = context.applicationContext ?: context
+        if (FirebaseApp.getApps(appContext).isNotEmpty()) {
+            true
+        } else {
+            FirebaseApp.initializeApp(appContext) != null
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "FirebaseApp no disponible en este compilado: ${e.message}")
+        false
+    }
+}
+
 fun configureAppCheck(context: Context, intent: Intent?) {
     try {
-        if (FirebaseApp.getApps(context).isEmpty()) {
-            FirebaseApp.initializeApp(context)
+        if (!isFirebaseAvailable(context)) {
+            Log.w(TAG, "FirebaseApp no inicializado (falta google-services.json). Ejecutando en modo local.")
+            return
         }
 
         if (BuildConfig.DEBUG) {

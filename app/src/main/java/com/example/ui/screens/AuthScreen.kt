@@ -53,6 +53,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
+import com.example.firebase.isFirebaseAvailable
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -85,7 +86,11 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    if (Firebase.auth.currentUser != null) {
+    if (!isFirebaseAvailable(context)) {
+        onUnauthenticated()
+        return
+    }
+    if (runCatching { Firebase.auth.currentUser }.getOrNull() != null) {
         onAuthSuccess()
         return
     }
@@ -126,6 +131,10 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    if (!isFirebaseAvailable(context)) {
+        onAuthError("Firebase no está configurado en este compilado.")
+        return
+    }
     val clientId = resolveDefaultWebClientId(context)
     if (clientId == null) {
         onAuthError("Falta configuración de Google Sign-In (google-services.json / default_web_client_id).")
@@ -169,7 +178,7 @@ fun signOutFromFirebase(
             } catch (e: Exception) {
                 Log.w(AUTH_TAG, "Failed to clear credential state: ${e.message}")
             } finally {
-                Firebase.auth.signOut()
+                runCatching { Firebase.auth.signOut() }
                 onSignOutComplete()
             }
         }

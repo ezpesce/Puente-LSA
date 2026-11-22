@@ -151,6 +151,7 @@ fun DevicesAndSettingsScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             val syncText = when (cloudSyncState) {
+                                is CloudSyncUiState.LocalOnly -> "Modo local activo · Datos guardados en el dispositivo"
                                 is CloudSyncUiState.Syncing -> "Sincronizando con Cloud Firestore..."
                                 is CloudSyncUiState.Active -> "Firestore activo · ${cloudSyncState.syncedCount} registros en nube"
                                 is CloudSyncUiState.Error -> cloudSyncState.message
@@ -160,9 +161,17 @@ fun DevicesAndSettingsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.CloudDone,
+                                    imageVector = if (cloudSyncState is CloudSyncUiState.LocalOnly) {
+                                        Icons.Default.CloudOff
+                                    } else {
+                                        Icons.Default.CloudDone
+                                    },
                                     contentDescription = null,
-                                    tint = if (cloudSyncState is CloudSyncUiState.Error) StatusOffline else StatusOnline,
+                                    tint = when (cloudSyncState) {
+                                        is CloudSyncUiState.Error -> StatusOffline
+                                        is CloudSyncUiState.LocalOnly -> MaterialTheme.colorScheme.secondary
+                                        else -> StatusOnline
+                                    },
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Text(
@@ -173,20 +182,22 @@ fun DevicesAndSettingsScreen(
                             }
                         }
                     }
-                    OutlinedButton(
-                        onClick = onSignOut,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("sign_out_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Logout,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Cerrar sesión")
+                    if (cloudSyncState !is CloudSyncUiState.LocalOnly) {
+                        OutlinedButton(
+                            onClick = onSignOut,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("sign_out_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Logout,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Cerrar sesión")
+                        }
                     }
                 }
             }

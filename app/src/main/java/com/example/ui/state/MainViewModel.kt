@@ -48,6 +48,7 @@ sealed interface TranslationUiState {
 }
 
 sealed interface CloudSyncUiState {
+    data object LocalOnly : CloudSyncUiState
     data object Syncing : CloudSyncUiState
     data class Active(val syncedCount: Int) : CloudSyncUiState
     data class Error(val message: String) : CloudSyncUiState
@@ -101,21 +102,25 @@ class MainViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Two-tier Firestore flow observation for real-time cloud sync
-    val cloudSyncState: StateFlow<CloudSyncUiState> = combine(
-        cloudRepo.observeTranslations(currentUserId),
-        cloudRepo.observeFrequentPhrases(currentUserId),
-        cloudRepo.observeLearnedSigns(currentUserId)
-    ) { cloudTranslations, cloudPhrases, cloudSigns ->
-        CloudSyncUiState.Active(cloudTranslations.size + cloudPhrases.size + cloudSigns.size) as CloudSyncUiState
-    }.catch { error ->
-        val firestoreError = generateSequence(error) { it.cause }
-            .filterIsInstance<FirebaseFirestoreException>()
-            .firstOrNull()
-        if (firestoreError == null && error is CancellationException) throw error
-        val rootError = firestoreError ?: error
-        Log.w(VM_TAG, "Error observing Firestore sync", rootError)
-        emit(CloudSyncUiState.Error(rootError.localizedMessage ?: "Error al sincronizar con Firestore"))
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), CloudSyncUiState.Syncing)
+    val cloudSyncState: StateFlow<CloudSyncUiState> = if (!cloudRepo.isEnabled) {
+        MutableStateFlow<CloudSyncUiState>(CloudSyncUiState.LocalOnly).asStateFlow()
+    } else {
+        combine(
+            cloudRepo.observeTranslations(currentUserId),
+            cloudRepo.observeFrequentPhrases(currentUserId),
+            cloudRepo.observeLearnedSigns(currentUserId)
+        ) { cloudTranslations, cloudPhrases, cloudSigns ->
+            CloudSyncUiState.Active(cloudTranslations.size + cloudPhrases.size + cloudSigns.size) as CloudSyncUiState
+        }.catch { error ->
+            val firestoreError = generateSequence(error) { it.cause }
+                .filterIsInstance<FirebaseFirestoreException>()
+                .firstOrNull()
+            if (firestoreError == null && error is CancellationException) throw error
+            val rootError = firestoreError ?: error
+            Log.w(VM_TAG, "Error observing Firestore sync", rootError)
+            emit(CloudSyncUiState.Error(rootError.localizedMessage ?: "Error al sincronizar con Firestore"))
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), CloudSyncUiState.Syncing)
+    }
 
     val isSpeaking: StateFlow<Boolean> = ttsSpeaker.isSpeaking
     val voiceStatus: StateFlow<String> = ttsSpeaker.voiceStatus
@@ -186,7 +191,11 @@ class MainViewModel(
                 )
                 handleTranslationSuccess(
                     result = result,
-                    sourceMode = if (offline) "OFFLINE_ENGINE" else "GEMINI_AI",
+                    sourceMode = when {
+                        offline -> "OFFLINE_ENGINE"
+                        requiresFirebaseAiNotice -> "LOCAL_SAMPLE"
+                        else -> "GEMINI_AI"
+                    },
                     isOffline = offline
                 )
             } catch (e: CancellationException) {
@@ -241,7 +250,11 @@ class MainViewModel(
                 )
                 handleTranslationSuccess(
                     result = result,
-                    sourceMode = if (offline) "OFFLINE_ENGINE" else "GEMINI_COMPOSER",
+                    sourceMode = when {
+                        offline -> "OFFLINE_ENGINE"
+                        requiresFirebaseAiNotice -> "LOCAL_SAMPLE"
+                        else -> "GEMINI_COMPOSER"
+                    },
                     isOffline = offline
                 )
             } catch (e: CancellationException) {
@@ -266,7 +279,7 @@ class MainViewModel(
         result.detectedGlosses.forEach { gloss ->
             learnedSignDao.findByGloss(gloss)?.let { entity ->
                 learnedSignDao.recordUsage(entity.id)
-                if (!isOffline) {
+                if (!isOffline && cloudRepo.isEnabled) {
                     cloudRepo.upsertLearnedSign(
                         LearnedSignCloudDoc(
                             userId = currentUserId,
@@ -300,7 +313,7 @@ class MainViewModel(
             )
         )
 
-        if (!isOffline) {
+        if (!isOffline && cloudRepo.isEnabled) {
             cloudRepo.saveTranslation(
                 TranslationCloudDoc(
                     userId = currentUserId,
@@ -385,7 +398,7 @@ class MainViewModel(
                     isFavorite = phrase.isPinned
                 )
             )
-            if (!isEffectiveOffline.value) {
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                 cloudRepo.saveFrequentPhrase(
                     FrequentPhraseCloudDoc(
                         id = "phrase_${phrase.id}",
@@ -416,7 +429,7 @@ class MainViewModel(
                     isPinned = true
                 )
             )
-            if (!isEffectiveOffline.value) {
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                 cloudRepo.saveFrequentPhrase(
                     FrequentPhraseCloudDoc(
                         id = "phrase_$insertedId",
@@ -454,7 +467,7 @@ class MainViewModel(
     fun deletePhrase(id: Long) {
         viewModelScope.launch {
             frequentPhraseDao.deleteById(id)
-            if (!isEffectiveOffline.value) {
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                 cloudRepo.deleteFrequentPhrase("phrase_$id")
             }
         }
@@ -476,7 +489,7 @@ class MainViewModel(
         viewModelScope.launch {
             val newPinned = !sign.isPinned
             learnedSignDao.setPinned(sign.id, newPinned)
-            if (!isEffectiveOffline.value) {
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                 cloudRepo.upsertLearnedSign(
                     LearnedSignCloudDoc(
                         userId = currentUserId,
@@ -526,7 +539,7 @@ class MainViewModel(
                     isUserCreated = true
                 )
             )
-            if (!isEffectiveOffline.value) {
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                 cloudRepo.upsertLearnedSign(
                     LearnedSignCloudDoc(
                         userId = currentUserId,
@@ -553,7 +566,7 @@ class MainViewModel(
             tutorialDao.markPracticed(lesson.id, true)
             learnedSignDao.findByGloss(lesson.glossKey)?.let { sign ->
                 learnedSignDao.recordUsage(sign.id)
-                if (!isEffectiveOffline.value) {
+                if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
                     cloudRepo.upsertLearnedSign(
                         LearnedSignCloudDoc(
                             userId = currentUserId,

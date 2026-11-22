@@ -55,10 +55,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.ai.GeminiSignAiRepository
+import com.example.data.ai.LocalPlaceholderSignAiRepository
 import com.example.data.local.AppDatabase
 import com.example.data.local.UserPreferencesRepository
 import com.example.firebase.CloudSyncRepository
 import com.example.firebase.configureAppCheck
+import com.example.firebase.isFirebaseAvailable
 import com.example.platform.HapticAlertManager
 import com.example.platform.NetworkMonitor
 import com.example.platform.TtsSpeaker
@@ -157,7 +159,45 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun RootAuthGate(auth: FirebaseAuth = Firebase.auth) {
+fun RootAuthGate(firebaseAuth: FirebaseAuth? = null) {
+    val context = LocalContext.current
+    val auth = remember(context, firebaseAuth) {
+        firebaseAuth ?: if (isFirebaseAvailable(context)) {
+            runCatching { Firebase.auth }.getOrNull()
+        } else {
+            null
+        }
+    }
+
+    if (auth == null) {
+        key("local_device") {
+            val viewModel: MainViewModel = viewModel(
+                key = "local_device",
+                factory = viewModelFactory {
+                    initializer {
+                        val app = checkNotNull(this[APPLICATION_KEY])
+                        MainViewModel(
+                            currentUserId = "local_device",
+                            database = AppDatabase.getInstance(app),
+                            prefsRepo = UserPreferencesRepository(app),
+                            aiRepository = LocalPlaceholderSignAiRepository(),
+                            cloudRepo = CloudSyncRepository(db = null, auth = null),
+                            ttsSpeaker = TtsSpeaker(app),
+                            hapticManager = HapticAlertManager(app),
+                            networkMonitor = NetworkMonitor(app),
+                            wearableManager = WearableSyncManager(app)
+                        )
+                    }
+                }
+            )
+            PuenteLsaApp(
+                viewModel = viewModel,
+                userEmail = "Modo local (sin cuenta Firebase)"
+            )
+        }
+        return
+    }
+
     val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
     val user = currentUser
 
@@ -177,7 +217,9 @@ fun RootAuthGate(auth: FirebaseAuth = Firebase.auth) {
                     initializer {
                         val app = checkNotNull(this[APPLICATION_KEY])
                         val databaseId = app.getString(R.string.firestore_database_id)
-                        val firestore = FirebaseFirestore.getInstance(databaseId)
+                        val firestore = runCatching {
+                            FirebaseFirestore.getInstance(databaseId)
+                        }.getOrNull()
                         MainViewModel(
                             currentUserId = uid,
                             database = AppDatabase.getInstance(app),

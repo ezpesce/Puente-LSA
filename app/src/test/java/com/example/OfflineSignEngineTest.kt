@@ -4,6 +4,9 @@ import com.example.data.ai.LocalPlaceholderSignAiRepository
 import com.example.data.ai.OfflineSignEngine
 import com.example.data.local.AppDatabase
 import com.example.data.model.SignLanguageRegistry
+import com.example.firebase.CloudSyncRepository
+import com.example.firebase.TranslationCloudDoc
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -49,5 +52,16 @@ class OfflineSignEngineTest {
         )
         assertTrue(result.isAiSampleMode)
         assertTrue(result.idiomaticPhrase.startsWith("[Muestra IA]"))
+    }
+
+    @Test
+    fun cloudSyncRepositoryOperatesSafelyWithoutFirebase() = runTest {
+        val repo = CloudSyncRepository(db = null, auth = null)
+        assertFalse(repo.isEnabled)
+        assertTrue(repo.observeTranslations("local_device").first().isEmpty())
+        assertTrue(repo.observeFrequentPhrases("local_device").first().isEmpty())
+        assertTrue(repo.observeLearnedSigns("local_device").first().isEmpty())
+        val saveResult = repo.saveTranslation(TranslationCloudDoc(userId = "local_device"))
+        assertTrue(saveResult.isFailure)
     }
 }
