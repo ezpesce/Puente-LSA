@@ -1,0 +1,113 @@
+{
+  "entities": {
+    "TranslationRecord": {
+      "title": "TranslationRecord",
+      "description": "Cloud-synced sign language translation record belonging to a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "languageCode": { "type": "string", "description": "Sign language code such as LSA, LSE, ASL" },
+        "rawGlosses": { "type": "string", "description": "Detected or selected gloss sequence" },
+        "naturalPhrase": { "type": "string", "description": "Idiomatic translated phrase" },
+        "sourceMode": { "type": "string", "description": "GEMINI_AI, OFFLINE_ENGINE, or MANUAL_COMPOSER" },
+        "confidencePercent": { "type": "integer", "description": "Confidence percentage 0..100" },
+        "spokenAloud": { "type": "boolean", "description": "Whether TTS spoke the phrase" },
+        "offlineRecord": { "type": "boolean", "description": "Whether created while offline" },
+        "favorite": { "type": "boolean", "description": "Whether marked as favorite" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": [
+        "userId",
+        "languageCode",
+        "rawGlosses",
+        "naturalPhrase",
+        "sourceMode",
+        "confidencePercent",
+        "spokenAloud",
+        "offlineRecord",
+        "favorite",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FrequentPhrase": {
+      "title": "FrequentPhrase",
+      "description": "User-saved frequent conversation phrase for quick speech and wearable sync",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "title": { "type": "string", "description": "Short label for quick access" },
+        "phraseText": { "type": "string", "description": "Full phrase to speak and show" },
+        "category": { "type": "string", "description": "Phrase category" },
+        "languageCode": { "type": "string", "description": "Sign language code" },
+        "usageCount": { "type": "integer", "description": "Times used by the user" },
+        "pinned": { "type": "boolean", "description": "Pinned to top" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": [
+        "userId",
+        "title",
+        "phraseText",
+        "category",
+        "languageCode",
+        "usageCount",
+        "pinned",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "LearnedSign": {
+      "title": "LearnedSign",
+      "description": "Adaptive personalized sign usage and mastery record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "glossKey": { "type": "string", "description": "Canonical gloss key" },
+        "displayTitle": { "type": "string", "description": "Human-readable sign name" },
+        "idiomaticOutput": { "type": "string", "description": "Default Argentine idiomatic output" },
+        "category": { "type": "string", "description": "Sign category" },
+        "languageCode": { "type": "string", "description": "Sign language code" },
+        "handshapeGuide": { "type": "string", "description": "Handshape and motion instructions" },
+        "facialCue": { "type": "string", "description": "Facial expression grammar note" },
+        "usageCount": { "type": "integer", "description": "Usage frequency counter" },
+        "masteryPercent": { "type": "integer", "description": "Mastery percentage 0..100" },
+        "pinned": { "type": "boolean", "description": "User pinned priority" },
+        "userCreated": { "type": "boolean", "description": "Whether custom-created by user" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": [
+        "userId",
+        "glossKey",
+        "displayTitle",
+        "idiomaticOutput",
+        "category",
+        "languageCode",
+        "handshapeGuide",
+        "facialCue",
+        "usageCount",
+        "masteryPercent",
+        "pinned",
+        "userCreated",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/translations/{translationId}": {
+      "schema": { "$ref": "#/entities/TranslationRecord" },
+      "description": "Per-user sign language translation history"
+    },
+    "/users/{userId}/frequent_phrases/{phraseId}": {
+      "schema": { "$ref": "#/entities/FrequentPhrase" },
+      "description": "Per-user saved frequent conversation phrases"
+    },
+    "/users/{userId}/learned_signs/{signId}": {
+      "schema": { "$ref": "#/entities/LearnedSign" },
+      "description": "Per-user adaptive sign vocabulary and mastery progress"
+    }
+  }
+}

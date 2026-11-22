@@ -1,0 +1,6 @@
+{
+  "name": "Puente LSA",
+  "description": "Traductor en tiempo real de Lengua de Señas Argentina (LSA) con cámara, IA, síntesis de voz, tutorial interactivo, modo offline y sincronización wearable.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

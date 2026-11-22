@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTranslation(data, userId) {
+      return data.userId == userId &&
+        data.languageCode is string && data.languageCode.size() >= 2 && data.languageCode.size() <= 12 &&
+        data.rawGlosses is string && data.rawGlosses.size() >= 1 && data.rawGlosses.size() <= 200 &&
+        data.naturalPhrase is string && data.naturalPhrase.size() >= 1 && data.naturalPhrase.size() <= 500 &&
+        data.sourceMode is string && data.sourceMode.size() >= 1 && data.sourceMode.size() <= 40 &&
+        data.confidencePercent is int && data.confidencePercent >= 0 && data.confidencePercent <= 100 &&
+        data.spokenAloud is bool &&
+        data.offlineRecord is bool &&
+        data.favorite is bool;
+    }
+
+    function isValidFrequentPhrase(data, userId) {
+      return data.userId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 80 &&
+        data.phraseText is string && data.phraseText.size() >= 1 && data.phraseText.size() <= 500 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 40 &&
+        data.languageCode is string && data.languageCode.size() >= 2 && data.languageCode.size() <= 12 &&
+        data.usageCount is int && data.usageCount >= 0 && data.usageCount <= 1000000 &&
+        data.pinned is bool;
+    }
+
+    function isValidLearnedSign(data, userId) {
+      return data.userId == userId &&
+        data.glossKey is string && data.glossKey.size() >= 1 && data.glossKey.size() <= 60 &&
+        data.displayTitle is string && data.displayTitle.size() >= 1 && data.displayTitle.size() <= 80 &&
+        data.idiomaticOutput is string && data.idiomaticOutput.size() >= 1 && data.idiomaticOutput.size() <= 300 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 40 &&
+        data.languageCode is string && data.languageCode.size() >= 2 && data.languageCode.size() <= 12 &&
+        data.handshapeGuide is string && data.handshapeGuide.size() >= 1 && data.handshapeGuide.size() <= 400 &&
+        data.facialCue is string && data.facialCue.size() >= 1 && data.facialCue.size() <= 300 &&
+        data.usageCount is int && data.usageCount >= 0 && data.usageCount <= 1000000 &&
+        data.masteryPercent is int && data.masteryPercent >= 0 && data.masteryPercent <= 100 &&
+        data.pinned is bool &&
+        data.userCreated is bool;
+    }
+
+    match /users/{userId} {
+      allow get, list: if false;
+      allow write: if false;
+
+      match /translations/{translationId} {
+        allow get: if isOwner(userId) && isValidId(translationId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          isValidId(translationId) &&
+          incoming().keys().hasAll(['userId', 'languageCode', 'rawGlosses', 'naturalPhrase', 'sourceMode', 'confidencePercent', 'spokenAloud', 'offlineRecord', 'favorite', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'languageCode', 'rawGlosses', 'naturalPhrase', 'sourceMode', 'confidencePercent', 'spokenAloud', 'offlineRecord', 'favorite', 'createdAt', 'updatedAt']) &&
+          incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          isValidTranslation(incoming(), userId);
+        allow update: if isOwner(userId) &&
+          isValidId(translationId) &&
+          isValidTranslation(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['favorite', 'naturalPhrase', 'spokenAloud', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(translationId);
+      }
+
+      match /frequent_phrases/{phraseId} {
+        allow get: if isOwner(userId) && isValidId(phraseId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          isValidId(phraseId) &&
+          incoming().keys().hasAll(['userId', 'title', 'phraseText', 'category', 'languageCode', 'usageCount', 'pinned', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'title', 'phraseText', 'category', 'languageCode', 'usageCount', 'pinned', 'createdAt', 'updatedAt']) &&
+          incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          isValidFrequentPhrase(incoming(), userId);
+        allow update: if isOwner(userId) &&
+          isValidId(phraseId) &&
+          isValidFrequentPhrase(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'phraseText', 'category', 'usageCount', 'pinned', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(phraseId);
+      }
+
+      match /learned_signs/{signId} {
+        allow get: if isOwner(userId) && isValidId(signId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+          isValidId(signId) &&
+          incoming().keys().hasAll(['userId', 'glossKey', 'displayTitle', 'idiomaticOutput', 'category', 'languageCode', 'handshapeGuide', 'facialCue', 'usageCount', 'masteryPercent', 'pinned', 'userCreated', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'glossKey', 'displayTitle', 'idiomaticOutput', 'category', 'languageCode', 'handshapeGuide', 'facialCue', 'usageCount', 'masteryPercent', 'pinned', 'userCreated', 'createdAt', 'updatedAt']) &&
+          incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          isValidLearnedSign(incoming(), userId);
+        allow update: if isOwner(userId) &&
+          isValidId(signId) &&
+          isValidLearnedSign(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['usageCount', 'masteryPercent', 'pinned', 'idiomaticOutput', 'handshapeGuide', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(signId);
+      }
+    }
+  }
+}
