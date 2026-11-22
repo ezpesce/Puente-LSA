@@ -42,17 +42,28 @@ jobs:
       - name: Configurar Android SDK 36 y licencias
         uses: android-actions/setup-android@v4
         with:
-          packages: "platforms;android-36"
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+
+      - name: Instalar Android SDK 36.1 (minorApiLevel 1)
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMGR="$(command -v sdkmanager || ls "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)"
+          if [ -n "$SDKMGR" ]; then
+            yes | "$SDKMGR" --sdk_root="$SDK_ROOT" --licenses >/dev/null 2>&1 || true
+            "$SDKMGR" --sdk_root="$SDK_ROOT" "platforms;android-36.1" || true
+          fi
+          ls -la "$SDK_ROOT/platforms" || true
 
       - name: Definir tipo de compilación
         id: build-config
         shell: bash
         run: |
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            echo "build_type=release" >> $GITHUB_OUTPUT
+            echo "build_type=release" >> "$GITHUB_OUTPUT"
             echo "Variant: release"
           else
-            echo "build_type=debug" >> $GITHUB_OUTPUT
+            echo "build_type=debug" >> "$GITHUB_OUTPUT"
             echo "Variant: debug"
           fi
 
@@ -87,21 +98,35 @@ jobs:
             echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
           fi
 
-      - name: Dar permisos de ejecución a gradlew
-        run: chmod +x gradlew
+      - name: Preparar ejecutable Gradle 9.3.1
+        id: gradle-bin
+        shell: bash
+        run: |
+          if [ -f gradlew ] && [ -f gradle/wrapper/gradle-wrapper.jar ]; then
+            sed -i 's/\r$//' gradlew || true
+            chmod +x gradlew
+            echo "cmd=./gradlew" >> "$GITHUB_OUTPUT"
+          else
+            curl -fsSL "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip" -o "$RUNNER_TEMP/gradle-9.3.1.zip"
+            unzip -q "$RUNNER_TEMP/gradle-9.3.1.zip" -d "$RUNNER_TEMP"
+            chmod +x "$RUNNER_TEMP/gradle-9.3.1/bin/gradle"
+            echo "cmd=$RUNNER_TEMP/gradle-9.3.1/bin/gradle" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Compilar APK (Debug o Release)
         shell: bash
         env:
           BUILD_TYPE: ${{ steps.build-config.outputs.build_type }}
+          GRADLE_CMD: ${{ steps.gradle-bin.outputs.cmd }}
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          "$GRADLE_CMD" --version
           if [ "$BUILD_TYPE" = "release" ]; then
-            ./gradlew :app:assembleRelease --no-daemon --no-configuration-cache
+            "$GRADLE_CMD" :app:assembleRelease --no-daemon --no-configuration-cache --stacktrace
           else
-            ./gradlew :app:assembleDebug --no-daemon --no-configuration-cache
+            "$GRADLE_CMD" :app:assembleDebug --no-daemon --no-configuration-cache --stacktrace
           fi
 
       - name: Preparar APK para descarga
