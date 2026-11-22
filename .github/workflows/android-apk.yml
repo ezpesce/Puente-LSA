@@ -57,10 +57,10 @@ jobs:
           echo "$GRADLE_DIR/bin" >> "$GITHUB_PATH"
           "$GRADLE_DIR/bin/gradle" --version
 
-      - name: Configurar Android SDK 36.1 y licencias
+      - name: Configurar Android SDK 36 y licencias
         uses: android-actions/setup-android@v4
         with:
-          packages: "platform-tools platforms;android-36.1 build-tools;36.0.0"
+          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
 
       - name: Definir tipo de compilación
         id: build-config
