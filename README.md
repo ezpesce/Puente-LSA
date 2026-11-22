@@ -11,6 +11,10 @@ El repositorio incluye una rutina automática de GitHub Actions que compila la a
 3. **Descargar la APK:** al finalizar la ejecución, entrá al flujo completado y descargá el archivo desde la sección **Artifacts** (`Puente-LSA-APK-debug`).
 4. **Publicación por tag (opcional):** si creás un tag con formato `v1.0.0`, también se crea un **GitHub Release** con la APK adjunta directamente.
 
+### Firebase y Google Sign-In en la APK de GitHub (opcional)
+
+Si al exportar a GitHub no se incluyó `app/google-services.json`, la APK compilará igual sin errores. Para que la APK descargada desde GitHub también incluya Firebase y Google Sign-In activos, agregá el secreto `GOOGLE_SERVICES_JSON` (con el contenido de tu `app/google-services.json`) en **Settings → Secrets and variables → Actions**.
+
 ### Compilación `release` firmada (opcional)
 
 Por defecto se compila la APK `debug` usando `debug.keystore.base64` (con la misma firma ya registrada en Firebase para Google Sign-In). Si querés compilar una versión `release` desde **Run workflow**:
