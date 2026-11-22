@@ -1,0 +1,124 @@
+name: Compilar APK de Puente LSA
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Variante de APK a compilar"
+        required: true
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Compilar APK (${{ github.event.inputs.build_type || 'debug' }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Configurar Android SDK y licencias
+        uses: android-actions/setup-android@v3
+
+      - name: Configurar Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.3.1"
+
+      - name: Preparar keystore de firma
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ github.event.inputs.build_type || 'debug' }}
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ ! -f debug.keystore ]; then
+            if [ -f debug.keystore.base64 ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+              echo "debug.keystore restaurado desde debug.keystore.base64"
+            else
+              keytool -genkeypair -v \
+                -keystore debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+
+          if [ "$BUILD_TYPE" = "release" ]; then
+            if [ -z "$RELEASE_KEYSTORE_BASE64" ]; then
+              echo "::error::Para compilar en modo release debés configurar los secrets RELEASE_KEYSTORE_BASE64, STORE_PASSWORD y KEY_PASSWORD en GitHub."
+              exit 1
+            fi
+            echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
+          fi
+
+      - name: Ejecutar pruebas unitarias
+        run: gradle :app:testDebugUnitTest --no-daemon
+
+      - name: Compilar APK Debug
+        if: (github.event.inputs.build_type || 'debug') == 'debug'
+        run: gradle :app:assembleDebug --no-daemon
+
+      - name: Compilar APK Release
+        if: github.event.inputs.build_type == 'release'
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Preparar APK para descarga
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ github.event.inputs.build_type || 'debug' }}
+        run: |
+          mkdir -p build-artifacts
+          if [ "$BUILD_TYPE" = "release" ]; then
+            cp app/build/outputs/apk/release/*.apk build-artifacts/Puente-LSA-release.apk
+          else
+            cp app/build/outputs/apk/debug/*.apk build-artifacts/Puente-LSA-debug.apk
+          fi
+          ls -lh build-artifacts/
+
+      - name: Subir APK como artefacto descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Puente-LSA-APK-${{ github.event.inputs.build_type || 'debug' }}
+          path: build-artifacts/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publicar APK en GitHub Release (si es un tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build-artifacts/*.apk
+          generate_release_notes: true
+
+      - name: Resumen de descarga
+        shell: bash
+        run: |
+          echo "### APK de Puente LSA compilada correctamente" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Descargala desde la sección **Artifacts** al final de esta ejecución en GitHub Actions." >> "$GITHUB_STEP_SUMMARY"
