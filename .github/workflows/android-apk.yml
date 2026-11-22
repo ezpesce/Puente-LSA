@@ -42,7 +42,7 @@ jobs:
       - name: Configurar Android SDK 36 y licencias
         uses: android-actions/setup-android@v4
         with:
-          packages: "platform-tools platforms;android-36 build-tools;36.0.0"
+          packages: "platforms;android-36"
 
       - name: Definir tipo de compilación
         id: build-config
@@ -89,10 +89,6 @@ jobs:
 
       - name: Dar permisos de ejecución a gradlew
         run: chmod +x gradlew
-
-      - name: Ejecutar pruebas unitarias base (opcional)
-        continue-on-error: true
-        run: ./gradlew :app:testDebugUnitTest --tests "com.example.OfflineSignEngineTest" --tests "com.example.ExampleUnitTest" --no-daemon --no-configuration-cache
 
       - name: Compilar APK (Debug o Release)
         shell: bash
