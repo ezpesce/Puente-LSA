@@ -40,26 +40,21 @@ class OfflineSignEngineTest {
     }
 
     @Test
-    fun localRepoUsesDeterministicMotionAnalysisWithoutRandomSamples() = runTest {
+    fun localPlaceholderDoesNotFabricatePorFavorOnCameraCapture() = runTest {
         val repo = LocalPlaceholderSignAiRepository()
         val vocab = AppDatabase.initialLsaVocabulary()
-        val first = repo.interpretCameraFrame(
-            cameraBitmap = null,
-            motionScore = 0.6f,
-            languageCode = "LSA",
-            learnedVocabulary = vocab,
-            isOffline = false
-        )
-        val second = repo.interpretCameraFrame(
-            cameraBitmap = null,
-            motionScore = 0.6f,
-            languageCode = "LSA",
-            learnedVocabulary = vocab,
-            isOffline = false
-        )
-        assertFalse(first.isAiSampleMode)
-        assertFalse(first.idiomaticPhrase.startsWith("[Muestra IA]"))
-        assertEquals(first.idiomaticPhrase, second.idiomaticPhrase)
+        val failure = runCatching {
+            repo.interpretCameraFrame(
+                cameraBitmap = null,
+                motionScore = 0.6f,
+                languageCode = "LSA",
+                learnedVocabulary = vocab,
+                isOffline = false
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertTrue(failure?.message?.contains("google-services.json") == true)
     }
 
     @Test

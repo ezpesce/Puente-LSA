@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.ai.ExternalSignSearchResult
 import com.example.data.ai.GestureMotionSample
 import com.example.data.ai.OfflineSignEngine
 import com.example.data.ai.SignAiRepository
@@ -54,6 +55,13 @@ sealed interface CloudSyncUiState {
     data object Syncing : CloudSyncUiState
     data class Active(val syncedCount: Int) : CloudSyncUiState
     data class Error(val message: String) : CloudSyncUiState
+}
+
+sealed interface ExternalSearchUiState {
+    data object Idle : ExternalSearchUiState
+    data object Searching : ExternalSearchUiState
+    data class Success(val result: ExternalSignSearchResult, val savedToDictionary: Boolean = false) : ExternalSearchUiState
+    data class Error(val message: String) : ExternalSearchUiState
 }
 
 data class RealTimeAlertBanner(
@@ -153,6 +161,9 @@ class MainViewModel(
     private val _realTimeAlert = MutableStateFlow<RealTimeAlertBanner?>(null)
     val realTimeAlert: StateFlow<RealTimeAlertBanner?> = _realTimeAlert.asStateFlow()
 
+    private val _externalSearchState = MutableStateFlow<ExternalSearchUiState>(ExternalSearchUiState.Idle)
+    val externalSearchState: StateFlow<ExternalSearchUiState> = _externalSearchState.asStateFlow()
+
     val requiresFirebaseAiNotice: Boolean = aiRepository.requiresFirebaseNotice
 
     fun updateCameraMotion(score: Float) {
@@ -182,60 +193,59 @@ class MainViewModel(
         motionSamples: List<GestureMotionSample>
     ) {
         viewModelScope.launch {
-            val peakMotion = motionSamples.maxOfOrNull { it.overallScore } ?: _cameraMotionScore.value
-            if (motionSamples.isNotEmpty() && peakMotion < 0.08f) {
-                _translationState.value = TranslationUiState.Error(
-                    "No se detectó movimiento de seña frente a la cámara. Acercá tus manos e intentá nuevamente."
-                )
-                return@launch
+            val settings = userSettings.value
+            val offline = isEffectiveOffline.value
+
+            when {
+                aiRepository.requiresFirebaseNotice -> {
+                    _translationState.value = TranslationUiState.Error(
+                        "La cámara capturó la imagen, pero esta APK se compiló sin configuración Firebase (google-services.json), por lo que Gemini Vision y la búsqueda externa no están disponibles. Podés usar las señas rápidas de abajo."
+                    )
+                    return@launch
+                }
+                !settings.isAiExtraEnabled -> {
+                    _translationState.value = TranslationUiState.Error(
+                        "El Asistente IA de Señas está desactivado. Habilitalo en la pestaña 'IA y Voz' para interpretar señas reales con la cámara."
+                    )
+                    return@launch
+                }
+                offline -> {
+                    _translationState.value = TranslationUiState.Error(
+                        "Modo offline activo o sin conexión a internet. Para que la cámara interprete señas con IA necesitás conexión; mientras tanto podés armar frases con las señas rápidas de abajo."
+                    )
+                    return@launch
+                }
+                frames.isEmpty() -> {
+                    _translationState.value = TranslationUiState.Error(
+                        "No se pudieron capturar cuadros válidos de la cámara. Verificá que la cámara esté activa e intentá nuevamente."
+                    )
+                    return@launch
+                }
             }
 
             _translationState.value = TranslationUiState.Analyzing
-            val settings = userSettings.value
-            val offline = isEffectiveOffline.value
-            val useCloudAi = settings.isAiExtraEnabled && !offline && !aiRepository.requiresFirebaseNotice
             val vocab = learnedVocabulary.value
 
             try {
-                val result = if (useCloudAi) {
-                    aiRepository.interpretCameraGesture(
-                        frames = frames,
-                        motionSamples = motionSamples,
-                        languageCode = settings.activeSignLanguageCode,
-                        learnedVocabulary = vocab,
-                        isOffline = false
-                    )
-                } else {
-                    OfflineSignEngine.classifyGestureMotion(
-                        motionSamples = if (motionSamples.isNotEmpty()) {
-                            motionSamples
-                        } else {
-                            listOf(
-                                GestureMotionSample(
-                                    overallScore = peakMotion.coerceAtLeast(0.25f),
-                                    upperScore = 0.25f,
-                                    middleScore = 0.2f,
-                                    lowerScore = 0.1f,
-                                    leftScore = 0.2f,
-                                    rightScore = 0.1f
-                                )
-                            )
-                        },
-                        languageCode = settings.activeSignLanguageCode,
-                        vocabulary = vocab
-                    )
-                }
+                val result = aiRepository.interpretCameraGesture(
+                    frames = frames,
+                    motionSamples = motionSamples,
+                    languageCode = settings.activeSignLanguageCode,
+                    learnedVocabulary = vocab,
+                    isOffline = false
+                )
 
                 handleTranslationSuccess(
                     result = result,
-                    sourceMode = if (useCloudAi) "GEMINI_AI" else "OFFLINE_ENGINE",
-                    isOffline = !useCloudAi
+                    sourceMode = "GEMINI_AI",
+                    isOffline = false
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                Log.e(VM_TAG, "Error en interpretación visual con IA", e)
                 _translationState.value = TranslationUiState.Error(
-                    e.localizedMessage ?: "No se pudo procesar la seña."
+                    e.localizedMessage ?: "No se pudo interpretar la seña con Gemini Vision."
                 )
             }
         }
@@ -345,6 +355,46 @@ class MainViewModel(
                             masteryPercent = (entity.masteryPercent + 8).coerceAtMost(100).toLong(),
                             pinned = entity.isPinned,
                             userCreated = entity.isUserCreated
+                        )
+                    )
+                }
+            }
+        }
+
+        // Automatically learn and persist brand-new signs discovered by Gemini Vision + External Search
+        result.newlyLearnedSign?.let { proposal ->
+            if (learnedSignDao.findByGloss(proposal.glossKey) == null) {
+                val guide = "[Aprendida con IA] ${proposal.handshapeGuide}"
+                learnedSignDao.insert(
+                    LearnedSignEntity(
+                        glossKey = proposal.glossKey,
+                        displayTitle = proposal.displayTitle,
+                        idiomaticOutput = proposal.idiomaticOutput,
+                        category = proposal.category,
+                        languageCode = settings.activeSignLanguageCode,
+                        handshapeGuide = guide,
+                        facialCue = proposal.facialCue,
+                        usageCount = 1,
+                        masteryPercent = 45,
+                        isPinned = true,
+                        isUserCreated = true
+                    )
+                )
+                if (!isOffline && cloudRepo.isEnabled) {
+                    cloudRepo.upsertLearnedSign(
+                        LearnedSignCloudDoc(
+                            userId = currentUserId,
+                            glossKey = proposal.glossKey,
+                            displayTitle = proposal.displayTitle,
+                            idiomaticOutput = proposal.idiomaticOutput,
+                            category = proposal.category,
+                            languageCode = settings.activeSignLanguageCode,
+                            handshapeGuide = guide,
+                            facialCue = proposal.facialCue,
+                            usageCount = 1L,
+                            masteryPercent = 45L,
+                            pinned = true,
+                            userCreated = true
                         )
                     )
                 }
@@ -617,6 +667,89 @@ class MainViewModel(
                     )
                 )
             }
+            hapticManager.trigger(HapticPattern.LESSON_MASTERED, userSettings.value.hapticAlertsEnabled)
+        }
+    }
+
+    fun searchExternalSignWithAi(query: String) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) {
+            _externalSearchState.value = ExternalSearchUiState.Error(
+                "Escribí una palabra o expresión (ej. Buenos días, Farmacia, Subte) para buscar en fuentes externas."
+            )
+            return
+        }
+        viewModelScope.launch {
+            _externalSearchState.value = ExternalSearchUiState.Searching
+            val settings = userSettings.value
+            val offline = isEffectiveOffline.value
+            try {
+                val result = aiRepository.searchExternalSignKnowledge(
+                    query = cleanQuery,
+                    languageCode = settings.activeSignLanguageCode,
+                    learnedVocabulary = learnedVocabulary.value,
+                    isOffline = offline
+                )
+                _externalSearchState.value = ExternalSearchUiState.Success(result, savedToDictionary = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(VM_TAG, "Error en búsqueda externa de señas", e)
+                _externalSearchState.value = ExternalSearchUiState.Error(
+                    e.localizedMessage ?: "No se pudo consultar fuentes externas con IA."
+                )
+            }
+        }
+    }
+
+    fun saveExternalSignToVocabulary(result: ExternalSignSearchResult) {
+        viewModelScope.launch {
+            val lang = userSettings.value.activeSignLanguageCode
+            val existing = learnedSignDao.findByGloss(result.glossKey)
+            val taggedGuide = "[Aprendida con IA · Fuentes externas] ${result.handshapeGuide}"
+            if (existing == null) {
+                learnedSignDao.insert(
+                    LearnedSignEntity(
+                        glossKey = result.glossKey,
+                        displayTitle = result.displayTitle,
+                        idiomaticOutput = result.idiomaticPhrase,
+                        category = result.category,
+                        languageCode = lang,
+                        handshapeGuide = taggedGuide,
+                        facialCue = result.facialCue,
+                        usageCount = 1,
+                        masteryPercent = 50,
+                        isPinned = true,
+                        isUserCreated = true
+                    )
+                )
+            } else {
+                learnedSignDao.recordUsage(existing.id)
+            }
+
+            if (!isEffectiveOffline.value && cloudRepo.isEnabled) {
+                cloudRepo.upsertLearnedSign(
+                    LearnedSignCloudDoc(
+                        userId = currentUserId,
+                        glossKey = result.glossKey,
+                        displayTitle = result.displayTitle,
+                        idiomaticOutput = result.idiomaticPhrase,
+                        category = result.category,
+                        languageCode = lang,
+                        handshapeGuide = taggedGuide,
+                        facialCue = result.facialCue,
+                        usageCount = (existing?.usageCount?.toLong() ?: 0L) + 1L,
+                        masteryPercent = ((existing?.masteryPercent ?: 42) + 8).coerceAtMost(100).toLong(),
+                        pinned = true,
+                        userCreated = true
+                    )
+                )
+            }
+            _externalSearchState.value = ExternalSearchUiState.Success(result, savedToDictionary = true)
+            _realTimeAlert.value = RealTimeAlertBanner(
+                title = "Nueva seña guardada (${result.displayTitle})",
+                subtitle = "Ya está disponible para reconocimiento IA y frases rápidas."
+            )
             hapticManager.trigger(HapticPattern.LESSON_MASTERED, userSettings.value.hapticAlertsEnabled)
         }
     }

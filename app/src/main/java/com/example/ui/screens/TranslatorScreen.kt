@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
@@ -90,7 +91,10 @@ import com.example.R
 import com.example.data.ai.GestureMotionSample
 import com.example.data.local.LearnedSignEntity
 import com.example.data.local.UserSettings
+import com.example.ui.components.ExternalSourcesChipsRow
+import com.example.ui.components.FirebaseAiNoticeCard
 import com.example.ui.components.FullscreenInterlocutorDialog
+import com.example.ui.components.GoogleSearchEntryPointView
 import com.example.ui.components.SignLanguageChip
 import com.example.ui.components.SpeakingVisualIndicator
 import com.example.ui.components.StatusPill
@@ -130,6 +134,7 @@ fun TranslatorScreen(
     onStopSpeaking: () -> Unit,
     onSaveAsFrequent: (String, String) -> Unit,
     onTriggerInterlocutorAlert: () -> Unit,
+    onOpenAiVoiceTab: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -147,6 +152,8 @@ fun TranslatorScreen(
     val latestMotionSampleRef = remember { mutableStateOf<GestureMotionSample?>(null) }
     val currentMotionSamples = remember { mutableListOf<GestureMotionSample>() }
     val currentCapturedFrames = remember { mutableListOf<Bitmap>() }
+    val isCapturingFlag = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val wantFrameSnapshotFlag = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
     val onProcessGestureState by rememberUpdatedState(onProcessGestureCapture)
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -158,11 +165,15 @@ fun TranslatorScreen(
     LaunchedEffect(capturePhase) {
         when (capturePhase) {
             SignCapturePhase.IDLE -> {
+                isCapturingFlag.set(false)
+                wantFrameSnapshotFlag.set(false)
                 captureProgress = 0f
             }
             SignCapturePhase.PREPARING -> {
+                isCapturingFlag.set(false)
+                wantFrameSnapshotFlag.set(false)
+                synchronized(currentCapturedFrames) { currentCapturedFrames.clear() }
                 currentMotionSamples.clear()
-                currentCapturedFrames.clear()
                 captureProgress = 0f
                 val prepSteps = 12
                 repeat(prepSteps) { idx ->
@@ -172,19 +183,35 @@ fun TranslatorScreen(
                 capturePhase = SignCapturePhase.CAPTURING
             }
             SignCapturePhase.CAPTURING -> {
+                isCapturingFlag.set(true)
                 captureProgress = 0f
                 val captureSteps = 16 // 16 * 150ms = 2.4s active sign window
                 for (step in 1..captureSteps) {
+                    if (step == 3 || step == 9 || step == 15) {
+                        wantFrameSnapshotFlag.set(true)
+                    }
                     delay(150L)
                     captureProgress = step.toFloat() / captureSteps
                     latestMotionSampleRef.value?.let { currentMotionSamples.add(it) }
-                    if (step == 6 || step == 12 || step == captureSteps) {
-                        previewViewRef.value?.bitmap?.let { bmp ->
-                            currentCapturedFrames.add(bmp)
+                    if (step == 5 || step == 11 || step == captureSteps) {
+                        val currentCount = synchronized(currentCapturedFrames) { currentCapturedFrames.size }
+                        val expectedTarget = when (step) {
+                            5 -> 1
+                            11 -> 2
+                            else -> 3
+                        }
+                        if (currentCount < expectedTarget) {
+                            previewViewRef.value?.bitmap?.let { bmp ->
+                                synchronized(currentCapturedFrames) {
+                                    currentCapturedFrames.add(bmp)
+                                }
+                            }
                         }
                     }
                 }
-                val framesSnapshot = currentCapturedFrames.toList()
+                isCapturingFlag.set(false)
+                wantFrameSnapshotFlag.set(false)
+                val framesSnapshot = synchronized(currentCapturedFrames) { currentCapturedFrames.toList() }
                 val samplesSnapshot = currentMotionSamples.toList()
                 capturePhase = SignCapturePhase.IDLE
                 onProcessGestureState(framesSnapshot, samplesSnapshot)
@@ -276,9 +303,17 @@ fun TranslatorScreen(
                         CameraXLivePreview(
                             useFrontCamera = useFrontCamera,
                             isTorchOn = isTorchOn,
+                            wantFrameSnapshotFlag = wantFrameSnapshotFlag,
                             onMotionSample = { sample ->
                                 latestMotionSampleRef.value = sample
                                 onMotionUpdate(sample.overallScore)
+                            },
+                            onFrameCaptured = { bitmap ->
+                                synchronized(currentCapturedFrames) {
+                                    if (currentCapturedFrames.size < 4) {
+                                        currentCapturedFrames.add(bitmap)
+                                    }
+                                }
                             },
                             onPreviewViewReady = { previewViewRef.value = it },
                             modifier = Modifier.fillMaxSize()
@@ -491,14 +526,26 @@ fun TranslatorScreen(
             }
 
             // Live Translated Phrase Card
+            val isErrorState = translationState is TranslationUiState.Error
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("translation_result_card"),
                 shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surface,
+                color = if (isErrorState) {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
                 tonalElevation = 3.dp,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                border = BorderStroke(
+                    1.dp,
+                    if (isErrorState) {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
+                    } else {
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                    }
+                )
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -516,17 +563,18 @@ fun TranslatorScreen(
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
                                 contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                                tint = if (isErrorState) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = when (translationState) {
                                     is TranslationUiState.Success -> translationState.result.sourceLabel
-                                    is TranslationUiState.Analyzing -> "Interpretando seña..."
+                                    is TranslationUiState.Analyzing -> "Analizando cuadros y fuentes externas..."
+                                    is TranslationUiState.Error -> "Atención de cámara / IA"
                                     else -> "Traducción visual (${settings.activeSignLanguageCode})"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                color = if (isErrorState) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
                         }
                         if (settings.isVoiceExtraEnabled) {
@@ -541,16 +589,29 @@ fun TranslatorScreen(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
                             Text(
-                                text = "Procesando la seña capturada...",
+                                text = "Gemini Vision está analizando tus manos y consultando fuentes externas...",
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
                     } else {
                         Text(
                             text = currentPhrase,
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = if (isErrorState) MaterialTheme.typography.bodyLarge else MaterialTheme.typography.headlineSmall,
                             color = MaterialTheme.colorScheme.onSurface
                         )
+                    }
+
+                    if (isErrorState && !settings.isAiExtraEnabled) {
+                        OutlinedButton(
+                            onClick = onOpenAiVoiceTab,
+                            modifier = Modifier.height(48.dp)
+                        ) {
+                            Text("Ir a 'IA y Voz' para activar IA")
+                        }
+                    }
+
+                    if (requiresFirebaseAiNotice) {
+                        FirebaseAiNoticeCard()
                     }
 
                     if (translationState is TranslationUiState.Success) {
@@ -559,6 +620,23 @@ fun TranslatorScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+
+                        translationState.result.newlyLearnedSign?.let { learned ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    text = "Seña aprendida y guardada en tu diccionario: ${learned.displayTitle}",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                )
+                            }
+                        }
+
+                        ExternalSourcesChipsRow(sources = translationState.result.externalSources)
+                        GoogleSearchEntryPointView(renderedHtml = translationState.result.searchEntryPointHtml)
                     }
 
                     AnimatedVisibility(visible = selectedGlosses.isNotEmpty()) {
@@ -805,7 +883,9 @@ private fun CameraPermissionPlaceholder(
 private fun CameraXLivePreview(
     useFrontCamera: Boolean,
     isTorchOn: Boolean,
+    wantFrameSnapshotFlag: java.util.concurrent.atomic.AtomicBoolean,
     onMotionSample: (GestureMotionSample) -> Unit,
+    onFrameCaptured: (Bitmap) -> Unit,
     onPreviewViewReady: (PreviewView) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -851,6 +931,17 @@ private fun CameraXLivePreview(
                     .apply {
                         setAnalyzer(analysisExecutor) { imageProxy ->
                             frameCounter++
+                            if (wantFrameSnapshotFlag.compareAndSet(true, false)) {
+                                runCatching {
+                                    val rawBmp = imageProxy.toBitmap()
+                                    val rotated = rotateAndMirrorIfNeeded(
+                                        bitmap = rawBmp,
+                                        rotationDegrees = imageProxy.imageInfo.rotationDegrees,
+                                        mirrorHorizontally = useFrontCamera
+                                    )
+                                    onFrameCaptured(rotated)
+                                }
+                            }
                             if (frameCounter % 4 == 0) {
                                 val plane = imageProxy.planes.firstOrNull()
                                 if (plane != null) {
@@ -948,4 +1039,21 @@ private fun CameraXLivePreview(
         factory = { previewView },
         modifier = modifier
     )
+}
+
+private fun rotateAndMirrorIfNeeded(
+    bitmap: Bitmap,
+    rotationDegrees: Int,
+    mirrorHorizontally: Boolean
+): Bitmap {
+    if (rotationDegrees == 0 && !mirrorHorizontally) return bitmap
+    val matrix = Matrix().apply {
+        if (rotationDegrees != 0) {
+            postRotate(rotationDegrees.toFloat())
+        }
+        if (mirrorHorizontally) {
+            postScale(-1f, 1f)
+        }
+    }
+    return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 }

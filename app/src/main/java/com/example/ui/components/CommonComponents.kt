@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.content.Intent
+import android.net.Uri
+import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
@@ -60,15 +63,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
+import com.example.data.ai.ExternalSourceLink
 import com.example.data.model.SignLanguageProfile
 import com.example.data.model.SignLanguageRegistry
 import com.example.data.model.SignLanguageSupportLevel
 import com.example.ui.state.RealTimeAlertBanner
 import com.example.ui.theme.StatusOffline
 import com.example.ui.theme.StatusOnline
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
 fun StatusPill(
@@ -517,4 +526,82 @@ fun FullscreenInterlocutorDialog(
             }
         }
     }
+}
+
+@Composable
+fun ExternalSourcesChipsRow(
+    sources: List<ExternalSourceLink>,
+    modifier: Modifier = Modifier
+) {
+    if (sources.isEmpty()) return
+    val context = LocalContext.current
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "Fuentes externas consultadas:",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(sources, key = { it.uri }) { source ->
+                Surface(
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(source.uri)))
+                            }
+                        },
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = source.title,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = "Abrir fuente externa",
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GoogleSearchEntryPointView(
+    renderedHtml: String?,
+    modifier: Modifier = Modifier
+) {
+    val html = renderedHtml?.takeIf { it.isNotBlank() } ?: return
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                settings.javaScriptEnabled = false
+                loadDataWithBaseURL("https://www.google.com", html, "text/html", "UTF-8", null)
+            }
+        },
+        update = { webView ->
+            webView.loadDataWithBaseURL("https://www.google.com", html, "text/html", "UTF-8", null)
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(54.dp)
+    )
 }

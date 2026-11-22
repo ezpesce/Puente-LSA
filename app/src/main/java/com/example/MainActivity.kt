@@ -286,6 +286,7 @@ fun PuenteLsaApp(
     val wearableLogs by viewModel.wearableLogs.collectAsStateWithLifecycle()
     val bluetoothStatusMessage by viewModel.bluetoothStatusMessage.collectAsStateWithLifecycle()
     val cloudSyncState by viewModel.cloudSyncState.collectAsStateWithLifecycle()
+    val externalSearchState by viewModel.externalSearchState.collectAsStateWithLifecycle()
 
     var showLanguageSheet by remember { mutableStateOf(false) }
 
@@ -402,6 +403,9 @@ fun PuenteLsaApp(
                                 },
                                 onTriggerInterlocutorAlert = {
                                     viewModel.simulateInterlocutorAlert()
+                                },
+                                onOpenAiVoiceTab = {
+                                    navigateToTab(ROUTE_AI_VOICE)
                                 }
                             )
                         }
@@ -431,7 +435,8 @@ fun PuenteLsaApp(
                                 onCompleteLesson = viewModel::completeTutorialLesson,
                                 onSpeakExample = viewModel::speakText,
                                 onToggleSignPinned = viewModel::toggleSignPinned,
-                                onAddCustomSign = viewModel::addCustomLearnedSign
+                                onAddCustomSign = viewModel::addCustomLearnedSign,
+                                onOpenExternalAiSearch = { navigateToTab(ROUTE_AI_VOICE) }
                             )
                         }
 
@@ -442,7 +447,10 @@ fun PuenteLsaApp(
                                 requiresFirebaseAiNotice = viewModel.requiresFirebaseAiNotice,
                                 isSpeaking = isSpeaking,
                                 voiceStatus = voiceStatus,
+                                externalSearchState = externalSearchState,
                                 onSetAiExtraEnabled = viewModel::setAiExtraEnabled,
+                                onSearchExternalSign = viewModel::searchExternalSignWithAi,
+                                onSaveExternalSign = viewModel::saveExternalSignToVocabulary,
                                 onSetVoiceExtraEnabled = viewModel::setVoiceExtraEnabled,
                                 onSetAutoSpeak = viewModel::setAutoSpeakEnabled,
                                 onSetSpeechRate = viewModel::setSpeechRate,

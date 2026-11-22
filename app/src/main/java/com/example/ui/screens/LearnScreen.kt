@@ -87,6 +87,7 @@ fun LearnScreen(
     onSpeakExample: (String) -> Unit,
     onToggleSignPinned: (LearnedSignEntity) -> Unit,
     onAddCustomSign: (String, String, String, String) -> Unit,
+    onOpenExternalAiSearch: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -179,7 +180,10 @@ fun LearnScreen(
                     contentPadding = PaddingValues(bottom = 84.dp)
                 ) {
                     item {
-                        AdaptiveSummaryCard(vocabulary = vocabulary)
+                        AdaptiveSummaryCard(
+                            vocabulary = vocabulary,
+                            onOpenExternalAiSearch = onOpenExternalAiSearch
+                        )
                     }
                     items(vocabulary, key = { it.id }) { sign ->
                         LearnedSignCard(
@@ -351,7 +355,10 @@ private fun LessonCard(
 }
 
 @Composable
-private fun AdaptiveSummaryCard(vocabulary: List<LearnedSignEntity>) {
+private fun AdaptiveSummaryCard(
+    vocabulary: List<LearnedSignEntity>,
+    onOpenExternalAiSearch: () -> Unit
+) {
     val topUsed = vocabulary.sortedByDescending { it.usageCount }.take(3)
     val avgMastery = if (vocabulary.isEmpty()) 0 else vocabulary.map { it.masteryPercent }.average().toInt()
     Surface(
@@ -361,7 +368,7 @@ private fun AdaptiveSummaryCard(vocabulary: List<LearnedSignEntity>) {
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Text(
                 text = "Sistema Adaptativo Personalizado",
@@ -373,6 +380,12 @@ private fun AdaptiveSummaryCard(vocabulary: List<LearnedSignEntity>) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            OutlinedButton(
+                onClick = onOpenExternalAiSearch,
+                modifier = Modifier.height(48.dp)
+            ) {
+                Text("Buscar y aprender señas desde fuentes externas (IA)")
+            }
         }
     }
 }
