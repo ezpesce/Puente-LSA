@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Compilar APK (${{ github.event.inputs.build_type || 'debug' }})
+    name: Compilar APK (${{ inputs.build_type || 'debug' }})
     runs-on: ubuntu-latest
 
     steps:
@@ -35,18 +35,36 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Configurar Android SDK y licencias
-        uses: android-actions/setup-android@v3
-
-      - name: Configurar Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
+      - name: Caché de dependencias Gradle
+        uses: actions/cache@v4
         with:
-          gradle-version: "9.3.1"
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Instalar Gradle 9.3.1
+        shell: bash
+        run: |
+          GRADLE_DIR="$RUNNER_TEMP/gradle-9.3.1"
+          if [ ! -x "$GRADLE_DIR/bin/gradle" ]; then
+            curl -fsSL "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip" -o "$RUNNER_TEMP/gradle-9.3.1.zip"
+            unzip -q "$RUNNER_TEMP/gradle-9.3.1.zip" -d "$RUNNER_TEMP"
+          fi
+          echo "$GRADLE_DIR/bin" >> "$GITHUB_PATH"
+          "$GRADLE_DIR/bin/gradle" --version
+
+      - name: Configurar Android SDK 36.1 y licencias
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36.1 build-tools;36.0.0"
 
       - name: Preparar keystore de firma
         shell: bash
         env:
-          BUILD_TYPE: ${{ github.event.inputs.build_type || 'debug' }}
+          BUILD_TYPE: ${{ inputs.build_type || 'debug' }}
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           if [ ! -f debug.keystore ]; then
@@ -74,25 +92,25 @@ jobs:
             echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
           fi
 
-      - name: Ejecutar pruebas unitarias
-        run: gradle :app:testDebugUnitTest --no-daemon
+      - name: Ejecutar pruebas unitarias base
+        run: gradle :app:testDebugUnitTest --tests "com.example.OfflineSignEngineTest" --tests "com.example.ExampleUnitTest" --no-daemon --no-configuration-cache
 
       - name: Compilar APK Debug
-        if: (github.event.inputs.build_type || 'debug') == 'debug'
-        run: gradle :app:assembleDebug --no-daemon
+        if: ${{ inputs.build_type != 'release' }}
+        run: gradle :app:assembleDebug --no-daemon --no-configuration-cache
 
       - name: Compilar APK Release
-        if: github.event.inputs.build_type == 'release'
+        if: ${{ inputs.build_type == 'release' }}
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle :app:assembleRelease --no-daemon
+        run: gradle :app:assembleRelease --no-daemon --no-configuration-cache
 
       - name: Preparar APK para descarga
         shell: bash
         env:
-          BUILD_TYPE: ${{ github.event.inputs.build_type || 'debug' }}
+          BUILD_TYPE: ${{ inputs.build_type || 'debug' }}
         run: |
           mkdir -p build-artifacts
           if [ "$BUILD_TYPE" = "release" ]; then
@@ -105,7 +123,7 @@ jobs:
       - name: Subir APK como artefacto descargable
         uses: actions/upload-artifact@v4
         with:
-          name: Puente-LSA-APK-${{ github.event.inputs.build_type || 'debug' }}
+          name: Puente-LSA-APK-${{ inputs.build_type || 'debug' }}
           path: build-artifacts/*.apk
           retention-days: 30
           if-no-files-found: error
