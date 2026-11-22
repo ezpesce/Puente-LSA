@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
@@ -16,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -40,12 +42,12 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PanTool
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.Button
@@ -65,8 +67,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,16 +81,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.data.ai.GestureMotionSample
 import com.example.data.local.LearnedSignEntity
 import com.example.data.local.UserSettings
-import com.example.ui.components.FirebaseAiNoticeCard
 import com.example.ui.components.FullscreenInterlocutorDialog
 import com.example.ui.components.SignLanguageChip
 import com.example.ui.components.SpeakingVisualIndicator
@@ -96,6 +99,12 @@ import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 import kotlin.math.abs
 
+private enum class SignCapturePhase {
+    IDLE,
+    PREPARING,
+    CAPTURING
+}
+
 @Composable
 fun TranslatorScreen(
     settings: UserSettings,
@@ -104,7 +113,6 @@ fun TranslatorScreen(
     selectedGlosses: List<String>,
     learnedVocabulary: List<LearnedSignEntity>,
     cameraMotionScore: Float,
-    isAutoCaptureActive: Boolean,
     useFrontCamera: Boolean,
     isTorchOn: Boolean,
     isSpeaking: Boolean,
@@ -113,8 +121,7 @@ fun TranslatorScreen(
     onToggleOfflineMode: () -> Unit,
     onToggleCameraFacing: () -> Unit,
     onToggleTorch: () -> Unit,
-    onToggleAutoCapture: () -> Unit,
-    onAnalyzeCamera: (android.graphics.Bitmap?) -> Unit,
+    onProcessGestureCapture: (List<Bitmap>, List<GestureMotionSample>) -> Unit,
     onMotionUpdate: (Float) -> Unit,
     onAddGloss: (String) -> Unit,
     onRemoveLastGloss: () -> Unit,
@@ -135,17 +142,52 @@ fun TranslatorScreen(
     var showFullscreenCaption by remember { mutableStateOf(false) }
     val previewViewRef = remember { mutableStateOf<PreviewView?>(null) }
 
+    var capturePhase by remember { mutableStateOf(SignCapturePhase.IDLE) }
+    var captureProgress by remember { mutableFloatStateOf(0f) }
+    val latestMotionSampleRef = remember { mutableStateOf<GestureMotionSample?>(null) }
+    val currentMotionSamples = remember { mutableListOf<GestureMotionSample>() }
+    val currentCapturedFrames = remember { mutableListOf<Bitmap>() }
+    val onProcessGestureState by rememberUpdatedState(onProcessGestureCapture)
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         hasCameraPermission = granted
     }
 
-    LaunchedEffect(isAutoCaptureActive, hasCameraPermission) {
-        if (isAutoCaptureActive) {
-            while (true) {
-                delay(3600)
-                onAnalyzeCamera(previewViewRef.value?.bitmap)
+    LaunchedEffect(capturePhase) {
+        when (capturePhase) {
+            SignCapturePhase.IDLE -> {
+                captureProgress = 0f
+            }
+            SignCapturePhase.PREPARING -> {
+                currentMotionSamples.clear()
+                currentCapturedFrames.clear()
+                captureProgress = 0f
+                val prepSteps = 12
+                repeat(prepSteps) { idx ->
+                    delay(100L)
+                    captureProgress = (idx + 1).toFloat() / prepSteps
+                }
+                capturePhase = SignCapturePhase.CAPTURING
+            }
+            SignCapturePhase.CAPTURING -> {
+                captureProgress = 0f
+                val captureSteps = 16 // 16 * 150ms = 2.4s active sign window
+                for (step in 1..captureSteps) {
+                    delay(150L)
+                    captureProgress = step.toFloat() / captureSteps
+                    latestMotionSampleRef.value?.let { currentMotionSamples.add(it) }
+                    if (step == 6 || step == 12 || step == captureSteps) {
+                        previewViewRef.value?.bitmap?.let { bmp ->
+                            currentCapturedFrames.add(bmp)
+                        }
+                    }
+                }
+                val framesSnapshot = currentCapturedFrames.toList()
+                val samplesSnapshot = currentMotionSamples.toList()
+                capturePhase = SignCapturePhase.IDLE
+                onProcessGestureState(framesSnapshot, samplesSnapshot)
             }
         }
     }
@@ -153,47 +195,49 @@ fun TranslatorScreen(
     val currentPhrase = when (translationState) {
         is TranslationUiState.Success -> translationState.result.idiomaticPhrase
         is TranslationUiState.Error -> translationState.message
-        else -> "Hacé una seña frente a la cámara o tocá tus señas frecuentes."
+        else -> "Tocá 'Traducir seña', esperá la señal y hacé tu seña frente a la cámara."
     }
 
     if (showFullscreenCaption) {
         FullscreenInterlocutorDialog(
             phrase = currentPhrase,
             languageCode = settings.activeSignLanguageCode,
+            isVoiceEnabled = settings.isVoiceExtraEnabled,
             onSpeak = { onSpeakText(currentPhrase) },
             onDismiss = { showFullscreenCaption = false }
         )
     }
 
-    Box(
+    val statusLabel = when {
+        isEffectiveOffline -> "Offline"
+        settings.isAiExtraEnabled && !requiresFirebaseAiNotice -> "IA Gemini"
+        else -> "Local"
+    }
+
+    BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
+        val cameraHeight = (maxHeight * 0.62f).coerceIn(360.dp, 640.dp)
+
         Column(
             modifier = Modifier
                 .widthIn(max = 680.dp)
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Minimalist top status bar
+            // Compact Top Bar
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "Puente LSA",
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                    Text(
-                        text = "Traductor visual e idiomático",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = "Puente LSA",
+                    style = MaterialTheme.typography.headlineMedium
+                )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -203,33 +247,39 @@ fun TranslatorScreen(
                         onClick = onOpenLanguageSheet
                     )
                     StatusPill(
-                        label = when {
-                            isEffectiveOffline -> "Offline"
-                            requiresFirebaseAiNotice -> "Local"
-                            else -> "Gemini"
-                        },
+                        label = statusLabel,
                         isOffline = isEffectiveOffline,
                         onClick = onToggleOfflineMode
                     )
                 }
             }
 
-            // CameraX Live Viewfinder Card
+            // Large Dominant CameraX Live Viewfinder (~62% of screen height)
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(276.dp),
+                    .height(cameraHeight),
                 shape = RoundedCornerShape(24.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 tonalElevation = 2.dp,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                border = BorderStroke(
+                    width = if (capturePhase == SignCapturePhase.CAPTURING) 2.5.dp else 1.dp,
+                    color = when (capturePhase) {
+                        SignCapturePhase.CAPTURING -> Color(0xFF4ADE80)
+                        SignCapturePhase.PREPARING -> Color(0xFFFACC15)
+                        SignCapturePhase.IDLE -> MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+                    }
+                )
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (hasCameraPermission) {
                         CameraXLivePreview(
                             useFrontCamera = useFrontCamera,
                             isTorchOn = isTorchOn,
-                            onMotionScore = onMotionUpdate,
+                            onMotionSample = { sample ->
+                                latestMotionSampleRef.value = sample
+                                onMotionUpdate(sample.overallScore)
+                            },
                             onPreviewViewReady = { previewViewRef.value = it },
                             modifier = Modifier.fillMaxSize()
                         )
@@ -248,7 +298,7 @@ fun TranslatorScreen(
                             .fillMaxWidth()
                             .background(
                                 Brush.verticalGradient(
-                                    listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent)
+                                    listOf(Color.Black.copy(alpha = 0.58f), Color.Transparent)
                                 )
                             )
                             .padding(12.dp),
@@ -256,26 +306,33 @@ fun TranslatorScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            color = Color.Black.copy(alpha = 0.5f),
+                            color = Color.Black.copy(alpha = 0.56f),
                             shape = RoundedCornerShape(50)
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(8.dp)
+                                        .size(9.dp)
                                         .clip(CircleShape)
                                         .background(
-                                            if (isAutoCaptureActive) Color(0xFF4ADE80)
-                                            else Color(0xFF56CFE1)
+                                            when (capturePhase) {
+                                                SignCapturePhase.CAPTURING -> Color(0xFF4ADE80)
+                                                SignCapturePhase.PREPARING -> Color(0xFFFACC15)
+                                                SignCapturePhase.IDLE -> Color(0xFF56CFE1)
+                                            }
                                         )
                                 )
                                 Text(
-                                    text = if (isAutoCaptureActive) "Escucha visual continua" else "Cámara ${settings.activeSignLanguageCode}",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = when (capturePhase) {
+                                        SignCapturePhase.PREPARING -> "Preparate frente a la cámara..."
+                                        SignCapturePhase.CAPTURING -> "Hacé tu seña ahora..."
+                                        SignCapturePhase.IDLE -> "Cámara ${settings.activeSignLanguageCode} lista"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = Color.White
                                 )
                             }
@@ -315,19 +372,35 @@ fun TranslatorScreen(
                         }
                     }
 
-                    // Bottom overlay inside camera frame: motion bar + capture buttons
+                    // Bottom overlay inside camera frame: motion/capture progress + intentional single capture CTA
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .background(
                                 Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f))
+                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.78f))
                                 )
                             )
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        if (capturePhase != SignCapturePhase.IDLE) {
+                            LinearProgressIndicator(
+                                progress = { captureProgress.coerceIn(0.02f, 1f) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(7.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                                color = if (capturePhase == SignCapturePhase.CAPTURING) {
+                                    Color(0xFF4ADE80)
+                                } else {
+                                    Color(0xFFFACC15)
+                                },
+                                trackColor = Color.White.copy(alpha = 0.25f)
+                            )
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -340,7 +413,7 @@ fun TranslatorScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             LinearProgressIndicator(
-                                progress = { cameraMotionScore.coerceIn(0.08f, 1f) },
+                                progress = { cameraMotionScore.coerceIn(0.06f, 1f) },
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(6.dp)
@@ -355,16 +428,19 @@ fun TranslatorScreen(
                             )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        if (capturePhase == SignCapturePhase.IDLE) {
                             Button(
-                                onClick = { onAnalyzeCamera(previewViewRef.value?.bitmap) },
+                                onClick = {
+                                    if (!hasCameraPermission) {
+                                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                                    } else {
+                                        capturePhase = SignCapturePhase.PREPARING
+                                    }
+                                },
+                                enabled = translationState !is TranslationUiState.Analyzing,
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
+                                    .fillMaxWidth()
+                                    .height(50.dp)
                                     .semantics(mergeDescendants = true) {}
                                     .testTag("capture_sign_button"),
                                 colors = ButtonDefaults.buttonColors(
@@ -374,32 +450,47 @@ fun TranslatorScreen(
                                 Icon(
                                     imageVector = Icons.Default.CenterFocusStrong,
                                     contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(20.dp)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Traducir seña")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (hasCameraPermission) "Traducir seña" else "Activar cámara y traducir",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
                             }
-
+                        } else {
                             FilledTonalButton(
-                                onClick = onToggleAutoCapture,
+                                onClick = { capturePhase = SignCapturePhase.IDLE },
                                 modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("toggle_auto_capture_button")
+                                    .fillMaxWidth()
+                                    .height(50.dp)
+                                    .testTag("cancel_capture_sign_button"),
+                                colors = ButtonDefaults.filledTonalButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                )
                             ) {
                                 Icon(
-                                    imageVector = if (isAutoCaptureActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                    imageVector = Icons.Default.Close,
                                     contentDescription = null,
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(if (isAutoCaptureActive) "Pausar" else "Auto")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (capturePhase == SignCapturePhase.PREPARING) {
+                                        "Preparate... (Cancelar)"
+                                    } else {
+                                        "Capturando seña... (Cancelar)"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // Live Translated Idiomatic Phrase & Voice Output Card
+            // Live Translated Phrase Card
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -410,8 +501,8 @@ fun TranslatorScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -431,14 +522,16 @@ fun TranslatorScreen(
                             Text(
                                 text = when (translationState) {
                                     is TranslationUiState.Success -> translationState.result.sourceLabel
-                                    is TranslationUiState.Analyzing -> "Interpretando giros idiomáticos..."
-                                    else -> "Traducción en tiempo real (${settings.activeSignLanguageCode})"
+                                    is TranslationUiState.Analyzing -> "Interpretando seña..."
+                                    else -> "Traducción visual (${settings.activeSignLanguageCode})"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        SpeakingVisualIndicator(isSpeaking = isSpeaking)
+                        if (settings.isVoiceExtraEnabled) {
+                            SpeakingVisualIndicator(isSpeaking = isSpeaking)
+                        }
                     }
 
                     if (translationState is TranslationUiState.Analyzing) {
@@ -448,7 +541,7 @@ fun TranslatorScreen(
                         ) {
                             CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
                             Text(
-                                text = "Armando frase natural argentina...",
+                                text = "Procesando la seña capturada...",
                                 style = MaterialTheme.typography.bodyLarge
                             )
                         }
@@ -468,7 +561,6 @@ fun TranslatorScreen(
                         )
                     }
 
-                    // Active Gloss Sequence chips
                     AnimatedVisibility(visible = selectedGlosses.isNotEmpty()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -510,40 +602,58 @@ fun TranslatorScreen(
                         }
                     }
 
-                    // Primary accessible actions: Speak, Fullscreen Card, Save Frequent, Haptic Alert
+                    // Action Row: Visual fullscreen card always available; voice button only when Voice extra is enabled
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Button(
-                            onClick = {
-                                if (isSpeaking) onStopSpeaking() else onSpeakText(currentPhrase)
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp)
-                                .testTag("speak_translation_button")
-                        ) {
-                            Icon(
-                                imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(if (isSpeaking) "Detener voz" else stringResource(R.string.speak_aloud))
-                        }
+                        if (settings.isVoiceExtraEnabled) {
+                            Button(
+                                onClick = {
+                                    if (isSpeaking) onStopSpeaking() else onSpeakText(currentPhrase)
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("speak_translation_button")
+                            ) {
+                                Icon(
+                                    imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (isSpeaking) "Detener voz" else stringResource(R.string.speak_aloud))
+                            }
 
-                        FilledTonalIconButton(
-                            onClick = { showFullscreenCaption = true },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("fullscreen_caption_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Fullscreen,
-                                contentDescription = stringResource(R.string.fullscreen_caption)
-                            )
+                            FilledTonalIconButton(
+                                onClick = { showFullscreenCaption = true },
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .testTag("fullscreen_caption_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fullscreen,
+                                    contentDescription = stringResource(R.string.fullscreen_caption)
+                                )
+                            }
+                        } else {
+                            FilledTonalButton(
+                                onClick = { showFullscreenCaption = true },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("fullscreen_caption_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Fullscreen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(stringResource(R.string.fullscreen_caption))
+                            }
                         }
 
                         FilledTonalIconButton(
@@ -577,10 +687,6 @@ fun TranslatorScreen(
                 }
             }
 
-            if (requiresFirebaseAiNotice && !isEffectiveOffline) {
-                FirebaseAiNoticeCard()
-            }
-
             // Personalized Adaptive Frequent Signs Strip
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
@@ -606,7 +712,7 @@ fun TranslatorScreen(
                     }
                 }
                 Text(
-                    text = "Se ordenan automáticamente según tu uso para combinar frases al instante (funciona offline).",
+                    text = "Tocá una o más señas para armar frases al instante (100% local).",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -675,15 +781,15 @@ private fun CameraPermissionPlaceholder(
             imageVector = Icons.Default.Videocam,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(44.dp)
+            modifier = Modifier.size(52.dp)
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = stringResource(R.string.camera_permission_rationale),
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface
         )
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         OutlinedButton(
             onClick = onRequestPermission,
             modifier = Modifier
@@ -699,7 +805,7 @@ private fun CameraPermissionPlaceholder(
 private fun CameraXLivePreview(
     useFrontCamera: Boolean,
     isTorchOn: Boolean,
-    onMotionScore: (Float) -> Unit,
+    onMotionSample: (GestureMotionSample) -> Unit,
     onPreviewViewReady: (PreviewView) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -729,7 +835,7 @@ private fun CameraXLivePreview(
     DisposableEffect(useFrontCamera, lifecycleOwner) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         val mainExecutor = ContextCompat.getMainExecutor(context)
-        var lastAvgLuma = -1f
+        var prevGrid: FloatArray? = null
         var frameCounter = 0
 
         val listener = Runnable {
@@ -745,25 +851,64 @@ private fun CameraXLivePreview(
                     .apply {
                         setAnalyzer(analysisExecutor) { imageProxy ->
                             frameCounter++
-                            if (frameCounter % 5 == 0) {
-                                val buffer = imageProxy.planes.firstOrNull()?.buffer
-                                if (buffer != null) {
-                                    val remaining = buffer.remaining()
-                                    val step = (remaining / 120).coerceAtLeast(1)
-                                    var sum = 0L
-                                    var samples = 0
-                                    var idx = 0
-                                    while (idx < remaining) {
-                                        sum += (buffer.get(idx).toInt() and 0xFF)
-                                        samples++
-                                        idx += step
+                            if (frameCounter % 4 == 0) {
+                                val plane = imageProxy.planes.firstOrNull()
+                                if (plane != null) {
+                                    val buffer = plane.buffer
+                                    val rowStride = plane.rowStride
+                                    val width = imageProxy.width
+                                    val height = imageProxy.height
+                                    val stepX = (width / 18).coerceAtLeast(8)
+                                    val stepY = (height / 18).coerceAtLeast(8)
+
+                                    val cellSums = LongArray(9)
+                                    val cellCounts = IntArray(9)
+
+                                    var y = 0
+                                    while (y < height) {
+                                        val rowCell = ((y * 3) / height).coerceIn(0, 2)
+                                        val rowOffset = y * rowStride
+                                        var x = 0
+                                        while (x < width) {
+                                            val index = rowOffset + x
+                                            if (index < buffer.limit()) {
+                                                val colCell = ((x * 3) / width).coerceIn(0, 2)
+                                                val cellIdx = rowCell * 3 + colCell
+                                                cellSums[cellIdx] += (buffer.get(index).toInt() and 0xFF)
+                                                cellCounts[cellIdx]++
+                                            }
+                                            x += stepX
+                                        }
+                                        y += stepY
                                     }
-                                    val avgLuma = if (samples > 0) sum.toFloat() / samples else 0f
-                                    if (lastAvgLuma >= 0f) {
-                                        val delta = abs(avgLuma - lastAvgLuma) / 28f
-                                        onMotionScore(delta.coerceIn(0.05f, 1f))
+
+                                    val currGrid = FloatArray(9) { idx ->
+                                        if (cellCounts[idx] > 0) cellSums[idx].toFloat() / cellCounts[idx] else 0f
                                     }
-                                    lastAvgLuma = avgLuma
+
+                                    val previous = prevGrid
+                                    if (previous != null) {
+                                        val deltas = FloatArray(9) { idx ->
+                                            (abs(currGrid[idx] - previous[idx]) / 34f).coerceIn(0f, 1f)
+                                        }
+                                        val overall = (deltas.sum() / 9f).coerceIn(0f, 1f)
+                                        val upper = ((deltas[0] + deltas[1] + deltas[2]) / 3f).coerceIn(0f, 1f)
+                                        val middle = ((deltas[3] + deltas[4] + deltas[5]) / 3f).coerceIn(0f, 1f)
+                                        val lower = ((deltas[6] + deltas[7] + deltas[8]) / 3f).coerceIn(0f, 1f)
+                                        val left = ((deltas[0] + deltas[3] + deltas[6]) / 3f).coerceIn(0f, 1f)
+                                        val right = ((deltas[2] + deltas[5] + deltas[8]) / 3f).coerceIn(0f, 1f)
+                                        onMotionSample(
+                                            GestureMotionSample(
+                                                overallScore = overall,
+                                                upperScore = upper,
+                                                middleScore = middle,
+                                                lowerScore = lower,
+                                                leftScore = left,
+                                                rightScore = right
+                                            )
+                                        )
+                                    }
+                                    prevGrid = currGrid
                                 }
                             }
                             imageProxy.close()

@@ -3,6 +3,7 @@
     <string name="nav_translate">Traducir</string>
     <string name="nav_phrases">Frases</string>
     <string name="nav_learn">Aprender</string>
+    <string name="nav_ai_voice">IA y Voz</string>
     <string name="nav_devices">Ajustes</string>
     <string name="ai_firebase_notice">Modo muestra local: las respuestas de IA generativa y reconocimiento visual avanzado con Gemini requieren habilitar Firebase.</string>
     <string name="camera_permission_rationale">Necesitamos acceso a la cámara para interpretar tus señas en lengua de señas en tiempo real.</string>

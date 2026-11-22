@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.CenterFocusStrong
 import androidx.compose.material.icons.outlined.School
@@ -67,6 +69,7 @@ import com.example.platform.TtsSpeaker
 import com.example.platform.WearableSyncManager
 import com.example.ui.components.HapticAlertToastBanner
 import com.example.ui.components.SignLanguageSelectorSheet
+import com.example.ui.screens.AiAndVoiceScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.DevicesAndSettingsScreen
 import com.example.ui.screens.LearnScreen
@@ -88,6 +91,7 @@ import kotlinx.coroutines.flow.callbackFlow
 const val ROUTE_TRANSLATE = "translate"
 const val ROUTE_PHRASES = "phrases"
 const val ROUTE_LEARN = "learn"
+const val ROUTE_AI_VOICE = "ai_voice"
 const val ROUTE_DEVICES = "devices"
 
 data class NavDestinationItem(
@@ -119,6 +123,13 @@ private val appDestinations = listOf(
         selectedIcon = Icons.Filled.School,
         unselectedIcon = Icons.Outlined.School,
         testTag = "nav_learn"
+    ),
+    NavDestinationItem(
+        route = ROUTE_AI_VOICE,
+        labelRes = R.string.nav_ai_voice,
+        selectedIcon = Icons.Filled.AutoAwesome,
+        unselectedIcon = Icons.Outlined.AutoAwesome,
+        testTag = "nav_ai_voice"
     ),
     NavDestinationItem(
         route = ROUTE_DEVICES,
@@ -265,7 +276,6 @@ fun PuenteLsaApp(
     val historyRecords by viewModel.translationHistory.collectAsStateWithLifecycle()
     val tutorialLessons by viewModel.tutorialLessons.collectAsStateWithLifecycle()
     val cameraMotionScore by viewModel.cameraMotionScore.collectAsStateWithLifecycle()
-    val isAutoCaptureActive by viewModel.isAutoCaptureActive.collectAsStateWithLifecycle()
     val useFrontCamera by viewModel.useFrontCamera.collectAsStateWithLifecycle()
     val isTorchOn by viewModel.isTorchOn.collectAsStateWithLifecycle()
     val isSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
@@ -370,7 +380,6 @@ fun PuenteLsaApp(
                                 selectedGlosses = selectedGlosses,
                                 learnedVocabulary = learnedVocabulary,
                                 cameraMotionScore = cameraMotionScore,
-                                isAutoCaptureActive = isAutoCaptureActive,
                                 useFrontCamera = useFrontCamera,
                                 isTorchOn = isTorchOn,
                                 isSpeaking = isSpeaking,
@@ -381,8 +390,7 @@ fun PuenteLsaApp(
                                 },
                                 onToggleCameraFacing = viewModel::toggleCameraFacing,
                                 onToggleTorch = viewModel::toggleTorch,
-                                onToggleAutoCapture = viewModel::toggleAutoCapture,
-                                onAnalyzeCamera = { bitmap -> viewModel.analyzeCameraCapture(bitmap) },
+                                onProcessGestureCapture = viewModel::processCapturedSignGesture,
                                 onMotionUpdate = viewModel::updateCameraMotion,
                                 onAddGloss = viewModel::addGlossToken,
                                 onRemoveLastGloss = viewModel::removeLastGlossToken,
@@ -403,6 +411,7 @@ fun PuenteLsaApp(
                                 frequentPhrases = frequentPhrases,
                                 historyRecords = historyRecords,
                                 activeLanguageCode = settings.activeSignLanguageCode,
+                                isVoiceEnabled = settings.isVoiceExtraEnabled,
                                 onUsePhrase = viewModel::useFrequentPhrase,
                                 onTogglePinPhrase = viewModel::togglePhrasePinned,
                                 onDeletePhrase = viewModel::deletePhrase,
@@ -418,10 +427,27 @@ fun PuenteLsaApp(
                             LearnScreen(
                                 lessons = tutorialLessons,
                                 vocabulary = learnedVocabulary,
+                                isVoiceEnabled = settings.isVoiceExtraEnabled,
                                 onCompleteLesson = viewModel::completeTutorialLesson,
                                 onSpeakExample = viewModel::speakText,
                                 onToggleSignPinned = viewModel::toggleSignPinned,
                                 onAddCustomSign = viewModel::addCustomLearnedSign
+                            )
+                        }
+
+                        composable(ROUTE_AI_VOICE) {
+                            AiAndVoiceScreen(
+                                settings = settings,
+                                isEffectiveOffline = isEffectiveOffline,
+                                requiresFirebaseAiNotice = viewModel.requiresFirebaseAiNotice,
+                                isSpeaking = isSpeaking,
+                                voiceStatus = voiceStatus,
+                                onSetAiExtraEnabled = viewModel::setAiExtraEnabled,
+                                onSetVoiceExtraEnabled = viewModel::setVoiceExtraEnabled,
+                                onSetAutoSpeak = viewModel::setAutoSpeakEnabled,
+                                onSetSpeechRate = viewModel::setSpeechRate,
+                                onTestVoice = viewModel::testVoiceSample,
+                                onStopVoice = viewModel::stopSpeaking
                             )
                         }
 
@@ -430,7 +456,6 @@ fun PuenteLsaApp(
                                 settings = settings,
                                 isSystemOnline = isSystemOnline,
                                 isEffectiveOffline = isEffectiveOffline,
-                                voiceStatus = voiceStatus,
                                 bondedWearables = bondedWearables,
                                 lastMirroredCaption = lastMirroredCaption,
                                 wearableLogs = wearableLogs,
@@ -450,9 +475,7 @@ fun PuenteLsaApp(
                                 onSetOfflineMode = viewModel::setOfflineModeForced,
                                 onSetTheme = viewModel::setThemePreference,
                                 onOpenLanguageSheet = { showLanguageSheet = true },
-                                onSetHapticAlerts = viewModel::setHapticAlertsEnabled,
-                                onSetAutoSpeak = viewModel::setAutoSpeakEnabled,
-                                onSetSpeechRate = viewModel::setSpeechRate
+                                onSetHapticAlerts = viewModel::setHapticAlertsEnabled
                             )
                         }
                     }

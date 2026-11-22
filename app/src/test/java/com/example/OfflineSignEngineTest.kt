@@ -40,18 +40,26 @@ class OfflineSignEngineTest {
     }
 
     @Test
-    fun placeholderAiMarksSampleResponsesClearly() = runTest {
+    fun localRepoUsesDeterministicMotionAnalysisWithoutRandomSamples() = runTest {
         val repo = LocalPlaceholderSignAiRepository()
         val vocab = AppDatabase.initialLsaVocabulary()
-        val result = repo.interpretCameraFrame(
+        val first = repo.interpretCameraFrame(
             cameraBitmap = null,
             motionScore = 0.6f,
             languageCode = "LSA",
             learnedVocabulary = vocab,
             isOffline = false
         )
-        assertTrue(result.isAiSampleMode)
-        assertTrue(result.idiomaticPhrase.startsWith("[Muestra IA]"))
+        val second = repo.interpretCameraFrame(
+            cameraBitmap = null,
+            motionScore = 0.6f,
+            languageCode = "LSA",
+            learnedVocabulary = vocab,
+            isOffline = false
+        )
+        assertFalse(first.isAiSampleMode)
+        assertFalse(first.idiomaticPhrase.startsWith("[Muestra IA]"))
+        assertEquals(first.idiomaticPhrase, second.idiomaticPhrase)
     }
 
     @Test

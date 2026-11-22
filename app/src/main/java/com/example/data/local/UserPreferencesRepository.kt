@@ -19,7 +19,9 @@ data class UserSettings(
     val isOfflineModeForced: Boolean = false,
     val activeSignLanguageCode: String = "LSA",
     val hapticAlertsEnabled: Boolean = true,
-    val autoSpeakEnabled: Boolean = true,
+    val isAiExtraEnabled: Boolean = false,
+    val isVoiceExtraEnabled: Boolean = false,
+    val autoSpeakEnabled: Boolean = false,
     val speechRate: Float = 1.0f,
     val wearableSyncEnabled: Boolean = true,
     val wearableMirrorHaptics: Boolean = true,
@@ -33,6 +35,8 @@ class UserPreferencesRepository(private val context: Context) {
         val OFFLINE_MODE = booleanPreferencesKey("offline_mode_forced")
         val SIGN_LANG = stringPreferencesKey("active_sign_language")
         val HAPTIC_ALERTS = booleanPreferencesKey("haptic_alerts_enabled")
+        val AI_EXTRA_ENABLED = booleanPreferencesKey("ai_extra_enabled")
+        val VOICE_EXTRA_ENABLED = booleanPreferencesKey("voice_extra_enabled")
         val AUTO_SPEAK = booleanPreferencesKey("auto_speak_enabled")
         val SPEECH_RATE = floatPreferencesKey("speech_rate")
         val WEARABLE_SYNC = booleanPreferencesKey("wearable_sync_enabled")
@@ -48,7 +52,9 @@ class UserPreferencesRepository(private val context: Context) {
             isOfflineModeForced = prefs[Keys.OFFLINE_MODE] ?: false,
             activeSignLanguageCode = prefs[Keys.SIGN_LANG] ?: "LSA",
             hapticAlertsEnabled = prefs[Keys.HAPTIC_ALERTS] ?: true,
-            autoSpeakEnabled = prefs[Keys.AUTO_SPEAK] ?: true,
+            isAiExtraEnabled = prefs[Keys.AI_EXTRA_ENABLED] ?: false,
+            isVoiceExtraEnabled = prefs[Keys.VOICE_EXTRA_ENABLED] ?: false,
+            autoSpeakEnabled = prefs[Keys.AUTO_SPEAK] ?: false,
             speechRate = prefs[Keys.SPEECH_RATE] ?: 1.0f,
             wearableSyncEnabled = prefs[Keys.WEARABLE_SYNC] ?: true,
             wearableMirrorHaptics = prefs[Keys.WEARABLE_HAPTICS] ?: true,
@@ -70,6 +76,19 @@ class UserPreferencesRepository(private val context: Context) {
 
     suspend fun setHapticAlertsEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.HAPTIC_ALERTS] = enabled }
+    }
+
+    suspend fun setAiExtraEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.AI_EXTRA_ENABLED] = enabled }
+    }
+
+    suspend fun setVoiceExtraEnabled(enabled: Boolean) {
+        context.dataStore.edit {
+            it[Keys.VOICE_EXTRA_ENABLED] = enabled
+            if (!enabled) {
+                it[Keys.AUTO_SPEAK] = false
+            }
+        }
     }
 
     suspend fun setAutoSpeakEnabled(enabled: Boolean) {

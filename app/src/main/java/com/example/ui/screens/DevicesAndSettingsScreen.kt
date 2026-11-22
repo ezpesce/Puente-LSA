@@ -26,7 +26,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.CloudDone
@@ -41,7 +40,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -70,7 +68,6 @@ fun DevicesAndSettingsScreen(
     settings: UserSettings,
     isSystemOnline: Boolean,
     isEffectiveOffline: Boolean,
-    voiceStatus: String,
     bondedWearables: List<WearableDeviceInfo>,
     lastMirroredCaption: String,
     wearableLogs: List<WearableSyncLogItem>,
@@ -89,8 +86,6 @@ fun DevicesAndSettingsScreen(
     onSetTheme: (ThemePreference) -> Unit,
     onOpenLanguageSheet: () -> Unit,
     onSetHapticAlerts: (Boolean) -> Unit,
-    onSetAutoSpeak: (Boolean) -> Unit,
-    onSetSpeechRate: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val bluetoothPermissionLauncher = rememberLauncherForActivityResult(
@@ -520,7 +515,7 @@ fun DevicesAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(imageVector = Icons.Default.Vibration, contentDescription = null)
-                        Text(text = "Háptica y Voz Sintetizada", style = MaterialTheme.typography.titleLarge)
+                        Text(text = "Alertas Hápticas", style = MaterialTheme.typography.titleLarge)
                     }
 
                     SettingSwitchRow(
@@ -530,45 +525,6 @@ fun DevicesAndSettingsScreen(
                         onCheckedChange = onSetHapticAlerts,
                         testTag = "haptic_alerts_switch"
                     )
-
-                    SettingSwitchRow(
-                        title = "Hablar automáticamente al traducir",
-                        subtitle = voiceStatus,
-                        checked = settings.autoSpeakEnabled,
-                        onCheckedChange = onSetAutoSpeak,
-                        testTag = "auto_speak_switch"
-                    )
-
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text("Velocidad de voz", style = MaterialTheme.typography.titleMedium)
-                            }
-                            Text(
-                                text = "${"%.2f".format(settings.speechRate)}x",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Slider(
-                            value = settings.speechRate,
-                            onValueChange = onSetSpeechRate,
-                            valueRange = 0.7f..1.4f,
-                            steps = 6,
-                            modifier = Modifier.testTag("speech_rate_slider")
-                        )
-                    }
                 }
             }
 

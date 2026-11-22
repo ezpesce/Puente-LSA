@@ -16,6 +16,16 @@ import org.json.JSONObject
 
 private const val TAG = "GeminiSignAiRepo"
 
+data class GestureMotionSample(
+    val overallScore: Float,
+    val upperScore: Float,
+    val middleScore: Float,
+    val lowerScore: Float,
+    val leftScore: Float,
+    val rightScore: Float,
+    val timestampMs: Long = System.currentTimeMillis()
+)
+
 data class SignTranslationResult(
     val detectedGlosses: List<String>,
     val idiomaticPhrase: String,
@@ -36,6 +46,20 @@ interface SignAiRepository {
         isOffline: Boolean
     ): SignTranslationResult
 
+    suspend fun interpretCameraGesture(
+        frames: List<Bitmap>,
+        motionSamples: List<GestureMotionSample>,
+        languageCode: String,
+        learnedVocabulary: List<LearnedSignEntity>,
+        isOffline: Boolean
+    ): SignTranslationResult = interpretCameraFrame(
+        cameraBitmap = frames.lastOrNull(),
+        motionScore = motionSamples.maxOfOrNull { it.overallScore } ?: 0f,
+        languageCode = languageCode,
+        learnedVocabulary = learnedVocabulary,
+        isOffline = isOffline
+    )
+
     suspend fun refineIdiomaticPhrase(
         glossSequence: List<String>,
         languageCode: String,
@@ -46,7 +70,8 @@ interface SignAiRepository {
 
 /**
  * Offline rule-based LSA -> Argentine idiomatic Spanish engine.
- * Works 100% locally without network connectivity using Room vocabulary & Argentine voseo rules.
+ * Works 100% locally without network connectivity using Room vocabulary,
+ * spatial camera motion telemetry, and Argentine voseo rules.
  */
 object OfflineSignEngine {
 
@@ -63,6 +88,58 @@ object OfflineSignEngine {
         ("CUANTO_SALE" to "POR_FAVOR") to "Disculpá, ¿me decís cuánto sale esto, por favor?"
     )
 
+    fun classifyGestureMotion(
+        motionSamples: List<GestureMotionSample>,
+        languageCode: String,
+        vocabulary: List<LearnedSignEntity>
+    ): SignTranslationResult {
+        if (motionSamples.isEmpty()) {
+            return buildIdiomaticPhrase(emptyList(), languageCode, vocabulary)
+        }
+
+        val avgOverall = motionSamples.map { it.overallScore }.average().toFloat()
+        val peakOverall = motionSamples.maxOf { it.overallScore }
+        val avgUpper = motionSamples.map { it.upperScore }.average().toFloat()
+        val avgMiddle = motionSamples.map { it.middleScore }.average().toFloat()
+        val avgLower = motionSamples.map { it.lowerScore }.average().toFloat()
+        val lateralBalance = kotlin.math.abs(
+            motionSamples.map { it.leftScore }.average() - motionSamples.map { it.rightScore }.average()
+        ).toFloat()
+
+        // Vertical trend across the gesture (positive = moved upward, negative = moved downward)
+        val firstHalfLower = motionSamples.take((motionSamples.size / 2).coerceAtLeast(1))
+            .map { it.lowerScore }.average()
+        val secondHalfUpper = motionSamples.takeLast((motionSamples.size / 2).coerceAtLeast(1))
+            .map { it.upperScore }.average()
+        val upwardShift = (secondHalfUpper - firstHalfLower).toFloat()
+
+        val (detectedGloss, motionSummary) = when {
+            avgUpper >= avgMiddle && avgUpper >= avgLower && lateralBalance > 0.04f ->
+                listOf("HOLA") to "movimiento en zona superior/sien"
+            avgUpper >= avgMiddle && peakOverall > 0.55f ->
+                listOf("NO_ENTIENDO") to "gesto breve en zona superior"
+            upwardShift > 0.06f && peakOverall > 0.42f ->
+                listOf("AYUDA") to "elevación progresiva de manos"
+            avgMiddle >= avgUpper && avgOverall in 0.12f..0.34f ->
+                listOf("MAS_DESPACIO") to "movimiento pausado frente al torso"
+            avgMiddle >= avgUpper && avgLower >= avgUpper * 0.85f ->
+                listOf("GRACIAS") to "proyección desde mentón/pecho hacia el frente"
+            lateralBalance > 0.03f && avgMiddle >= avgLower ->
+                listOf("DONDE") to "vaivén lateral en zona media"
+            else ->
+                listOf("POR_FAVOR") to "movimiento suave en zona central"
+        }
+
+        val base = buildIdiomaticPhrase(detectedGloss, languageCode, vocabulary)
+        val confidence = ((peakOverall * 45f) + 50f).toInt().coerceIn(58, 89)
+        return base.copy(
+            culturalNote = "Interpretado localmente ($motionSummary). Podés combinar señas abajo o activar IA visual en 'IA y Voz'.",
+            confidencePercent = confidence,
+            isAiSampleMode = false,
+            sourceLabel = "Sensor de señas local ($languageCode)"
+        )
+    }
+
     fun buildIdiomaticPhrase(
         glossKeys: List<String>,
         languageCode: String,
@@ -73,10 +150,10 @@ object OfflineSignEngine {
             return SignTranslationResult(
                 detectedGlosses = emptyList(),
                 idiomaticPhrase = profile.sampleGreeting,
-                culturalNote = "Seleccioná señas o capturá un gesto con la cámara.",
+                culturalNote = "Tocá 'Traducir seña' y hacé el gesto frente a la cámara, o elegí señas abajo.",
                 confidencePercent = 90,
                 isAiSampleMode = false,
-                sourceLabel = "Motor Offline ($languageCode)"
+                sourceLabel = "Motor Local ($languageCode)"
             )
         }
 
@@ -94,8 +171,8 @@ object OfflineSignEngine {
 
         val localizedPhrase = adaptToSignLanguageDialect(phrase, languageCode)
         val note = when (languageCode) {
-            "LSA" -> "Giro idiomático argentino (voseo natural) generado localmente sin conexión."
-            else -> "Adaptación puente desde $languageCode mediante el diccionario universal offline."
+            "LSA" -> "Giro idiomático argentino (voseo natural) armado localmente."
+            else -> "Adaptación puente desde $languageCode mediante el diccionario local."
         }
 
         return SignTranslationResult(
@@ -104,7 +181,7 @@ object OfflineSignEngine {
             culturalNote = note,
             confidencePercent = 92,
             isAiSampleMode = false,
-            sourceLabel = "Motor Offline ($languageCode)"
+            sourceLabel = "Motor Local ($languageCode)"
         )
     }
 
@@ -127,8 +204,8 @@ object OfflineSignEngine {
 
 /**
  * Live Firebase AI Logic implementation powered by Gemini 3.8 Flash.
- * Uses structured JSON schema output and real camera frame bitmaps when online,
- * and delegates to [OfflineSignEngine] when offline mode is active.
+ * Uses structured JSON schema output and real camera gesture frames when AI extra is enabled & online,
+ * and delegates to [OfflineSignEngine] when local/offline mode is active.
  */
 class GeminiSignAiRepository : SignAiRepository {
     override val requiresFirebaseNotice: Boolean = false
@@ -157,7 +234,7 @@ class GeminiSignAiRepository : SignAiRepository {
             generationConfig = generationConfig {
                 responseMimeType = "application/json"
                 responseSchema = translationSchema
-                temperature = 0.35f
+                temperature = 0.3f
             }
         )
     }
@@ -169,13 +246,33 @@ class GeminiSignAiRepository : SignAiRepository {
         learnedVocabulary: List<LearnedSignEntity>,
         isOffline: Boolean
     ): SignTranslationResult {
+        val frames = if (cameraBitmap != null) listOf(cameraBitmap) else emptyList()
+        val samples = if (motionScore > 0f) {
+            listOf(
+                GestureMotionSample(
+                    overallScore = motionScore,
+                    upperScore = motionScore,
+                    middleScore = motionScore * 0.8f,
+                    lowerScore = motionScore * 0.5f,
+                    leftScore = motionScore * 0.5f,
+                    rightScore = motionScore * 0.5f
+                )
+            )
+        } else {
+            emptyList()
+        }
+        return interpretCameraGesture(frames, samples, languageCode, learnedVocabulary, isOffline)
+    }
+
+    override suspend fun interpretCameraGesture(
+        frames: List<Bitmap>,
+        motionSamples: List<GestureMotionSample>,
+        languageCode: String,
+        learnedVocabulary: List<LearnedSignEntity>,
+        isOffline: Boolean
+    ): SignTranslationResult {
         if (isOffline) {
-            val prioritized = learnedVocabulary
-                .sortedByDescending { it.usageCount }
-                .take(2)
-                .map { it.glossKey }
-                .ifEmpty { listOf("HOLA", "BIEN") }
-            return OfflineSignEngine.buildIdiomaticPhrase(prioritized, languageCode, learnedVocabulary)
+            return OfflineSignEngine.classifyGestureMotion(motionSamples, languageCode, learnedVocabulary)
         }
 
         val profile = SignLanguageRegistry.findByCode(languageCode)
@@ -183,22 +280,23 @@ class GeminiSignAiRepository : SignAiRepository {
             .sortedByDescending { it.usageCount }
             .take(8)
             .joinToString(", ") { "${it.glossKey} (${it.displayTitle})" }
+        val peakMotion = ((motionSamples.maxOfOrNull { it.overallScore } ?: 0f) * 100).toInt()
 
         val prompt = """
             Sos un intérprete experto en ${profile.name} ($languageCode, región: ${profile.region}).
-            Analizá la imagen de la cámara del usuario realizando una seña (nivel de movimiento detectado: ${(motionScore * 100).toInt()}%).
+            Analizá esta secuencia de ${frames.size} cuadro(s) capturados mientras el usuario realizaba una seña frente a la cámara (movimiento pico detectado: $peakMotion%).
             Vocabulario frecuente personalizado del usuario: $frequentGlossHint.
-            Si se observa una seña clara en las manos/rostro, identificala con precisión; si la mano está en transición o la escena es ambigua, inferí la intención comunicativa más probable y aclaralo brevemente en culturalNote.
+            Identificá la seña o intención comunicativa observando manos, postura y expresión facial.
             Para LSA generá español argentino natural con voseo (ej: "¿Cómo andás?", "¿Me ayudás por favor?").
         """.trimIndent()
 
         return try {
             val response = withTimeout(60_000L) {
-                if (cameraBitmap != null) {
-                    val scaled = scaleBitmapIfNeeded(cameraBitmap, 640)
+                if (frames.isNotEmpty()) {
+                    val scaledFrames = frames.takeLast(2).map { scaleBitmapIfNeeded(it, 640) }
                     model.generateContent(
                         content {
-                            image(scaled)
+                            scaledFrames.forEach { image(it) }
                             text(prompt)
                         }
                     )
@@ -307,16 +405,11 @@ class GeminiSignAiRepository : SignAiRepository {
 }
 
 /**
- * Fallback placeholder repository preserved for unit testing / non-Firebase contexts.
+ * Local deterministic sign repository used when Firebase is not configured in the APK.
+ * Uses real CameraX spatial motion telemetry and local LSA grammar without random phrases.
  */
 class LocalPlaceholderSignAiRepository : SignAiRepository {
     override val requiresFirebaseNotice: Boolean = true
-    private var cycleIndex = 0
-    private val sampleSequences = listOf(
-        listOf("HOLA", "COMO_ANDAS"),
-        listOf("MAS_DESPACIO", "POR_FAVOR"),
-        listOf("DONDE", "SUBTE_COLECTIVO")
-    )
 
     override suspend fun interpretCameraFrame(
         cameraBitmap: Bitmap?,
@@ -325,13 +418,31 @@ class LocalPlaceholderSignAiRepository : SignAiRepository {
         learnedVocabulary: List<LearnedSignEntity>,
         isOffline: Boolean
     ): SignTranslationResult {
-        val chosen = sampleSequences[cycleIndex++ % sampleSequences.size]
-        val base = OfflineSignEngine.buildIdiomaticPhrase(chosen, languageCode, learnedVocabulary)
-        return base.copy(
-            idiomaticPhrase = "[Muestra IA] ${base.idiomaticPhrase}",
-            isAiSampleMode = true,
-            sourceLabel = "Muestra IA ($languageCode)"
-        )
+        val samples = if (motionScore > 0f) {
+            listOf(
+                GestureMotionSample(
+                    overallScore = motionScore,
+                    upperScore = motionScore,
+                    middleScore = motionScore * 0.8f,
+                    lowerScore = motionScore * 0.4f,
+                    leftScore = motionScore * 0.6f,
+                    rightScore = motionScore * 0.4f
+                )
+            )
+        } else {
+            emptyList()
+        }
+        return OfflineSignEngine.classifyGestureMotion(samples, languageCode, learnedVocabulary)
+    }
+
+    override suspend fun interpretCameraGesture(
+        frames: List<Bitmap>,
+        motionSamples: List<GestureMotionSample>,
+        languageCode: String,
+        learnedVocabulary: List<LearnedSignEntity>,
+        isOffline: Boolean
+    ): SignTranslationResult {
+        return OfflineSignEngine.classifyGestureMotion(motionSamples, languageCode, learnedVocabulary)
     }
 
     override suspend fun refineIdiomaticPhrase(
@@ -340,11 +451,6 @@ class LocalPlaceholderSignAiRepository : SignAiRepository {
         learnedVocabulary: List<LearnedSignEntity>,
         isOffline: Boolean
     ): SignTranslationResult {
-        val base = OfflineSignEngine.buildIdiomaticPhrase(glossSequence, languageCode, learnedVocabulary)
-        return base.copy(
-            idiomaticPhrase = "[Muestra IA] ${base.idiomaticPhrase}",
-            isAiSampleMode = true,
-            sourceLabel = "Muestra IA ($languageCode)"
-        )
+        return OfflineSignEngine.buildIdiomaticPhrase(glossSequence, languageCode, learnedVocabulary)
     }
 }

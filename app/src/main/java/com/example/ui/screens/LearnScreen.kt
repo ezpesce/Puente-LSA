@@ -82,6 +82,7 @@ import com.example.ui.theme.StatusOnline
 fun LearnScreen(
     lessons: List<TutorialLessonEntity>,
     vocabulary: List<LearnedSignEntity>,
+    isVoiceEnabled: Boolean,
     onCompleteLesson: (TutorialLessonEntity) -> Unit,
     onSpeakExample: (String) -> Unit,
     onToggleSignPinned: (LearnedSignEntity) -> Unit,
@@ -98,6 +99,7 @@ fun LearnScreen(
     activeLesson?.let { lesson ->
         InteractiveLessonDialog(
             lesson = lesson,
+            isVoiceEnabled = isVoiceEnabled,
             onSpeak = { onSpeakExample(lesson.idiomaticExample.replace("\"", "")) },
             onMarkMastered = {
                 onCompleteLesson(lesson)
@@ -182,6 +184,7 @@ fun LearnScreen(
                     items(vocabulary, key = { it.id }) { sign ->
                         LearnedSignCard(
                             sign = sign,
+                            isVoiceEnabled = isVoiceEnabled,
                             onSpeak = { onSpeakExample(sign.idiomaticOutput) },
                             onTogglePin = { onToggleSignPinned(sign) }
                         )
@@ -377,6 +380,7 @@ private fun AdaptiveSummaryCard(vocabulary: List<LearnedSignEntity>) {
 @Composable
 private fun LearnedSignCard(
     sign: LearnedSignEntity,
+    isVoiceEnabled: Boolean,
     onSpeak: () -> Unit,
     onTogglePin: () -> Unit
 ) {
@@ -409,12 +413,14 @@ private fun LearnedSignCard(
                     )
                 }
                 Row {
-                    IconButton(onClick = onSpeak) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Escuchar seña",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    if (isVoiceEnabled) {
+                        IconButton(onClick = onSpeak) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Escuchar seña",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                     IconButton(onClick = onTogglePin) {
                         Icon(
@@ -453,6 +459,7 @@ private fun LearnedSignCard(
 @Composable
 private fun InteractiveLessonDialog(
     lesson: TutorialLessonEntity,
+    isVoiceEnabled: Boolean,
     onSpeak: () -> Unit,
     onMarkMastered: () -> Unit,
     onDismiss: () -> Unit
@@ -565,16 +572,18 @@ private fun InteractiveLessonDialog(
                     }
                 }
 
-                OutlinedButton(
-                    onClick = onSpeak,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("lesson_speak_example_button")
-                ) {
-                    Icon(imageVector = Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Escuchar: ${lesson.idiomaticExample}")
+                if (isVoiceEnabled) {
+                    OutlinedButton(
+                        onClick = onSpeak,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("lesson_speak_example_button")
+                    ) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Escuchar: ${lesson.idiomaticExample}")
+                    }
                 }
 
                 Button(

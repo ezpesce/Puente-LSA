@@ -69,6 +69,7 @@ fun PhrasesAndHistoryScreen(
     frequentPhrases: List<FrequentPhraseEntity>,
     historyRecords: List<TranslationRecordEntity>,
     activeLanguageCode: String,
+    isVoiceEnabled: Boolean,
     onUsePhrase: (FrequentPhraseEntity) -> Unit,
     onTogglePinPhrase: (FrequentPhraseEntity) -> Unit,
     onDeletePhrase: (Long) -> Unit,
@@ -96,6 +97,7 @@ fun PhrasesAndHistoryScreen(
         FullscreenInterlocutorDialog(
             phrase = text,
             languageCode = activeLanguageCode,
+            isVoiceEnabled = isVoiceEnabled,
             onSpeak = { onSpeakHistoryItem(text) },
             onDismiss = { fullscreenText = null }
         )
@@ -194,6 +196,7 @@ fun PhrasesAndHistoryScreen(
                         items(filteredPhrases, key = { it.id }) { phrase ->
                             FrequentPhraseCard(
                                 phrase = phrase,
+                                isVoiceEnabled = isVoiceEnabled,
                                 onUse = { onUsePhrase(phrase) },
                                 onShowFullscreen = { fullscreenText = phrase.phraseText },
                                 onTogglePin = { onTogglePinPhrase(phrase) },
@@ -216,6 +219,7 @@ fun PhrasesAndHistoryScreen(
                         items(historyRecords, key = { it.id }) { record ->
                             HistoryRecordCard(
                                 record = record,
+                                isVoiceEnabled = isVoiceEnabled,
                                 onSpeak = { onSpeakHistoryItem(record.naturalPhrase) },
                                 onShowFullscreen = { fullscreenText = record.naturalPhrase },
                                 onSaveFrequent = { onSaveHistoryAsFrequent(record) },
@@ -248,6 +252,7 @@ fun PhrasesAndHistoryScreen(
 @Composable
 private fun FrequentPhraseCard(
     phrase: FrequentPhraseEntity,
+    isVoiceEnabled: Boolean,
     onUse: () -> Unit,
     onShowFullscreen: () -> Unit,
     onTogglePin: () -> Unit,
@@ -321,12 +326,14 @@ private fun FrequentPhraseCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onUse) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Reproducir frase en voz",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    if (isVoiceEnabled) {
+                        IconButton(onClick = onUse) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Reproducir frase en voz",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                     IconButton(onClick = onShowFullscreen) {
                         Icon(
@@ -358,6 +365,7 @@ private fun FrequentPhraseCard(
 @Composable
 private fun HistoryRecordCard(
     record: TranslationRecordEntity,
+    isVoiceEnabled: Boolean,
     onSpeak: () -> Unit,
     onShowFullscreen: () -> Unit,
     onSaveFrequent: () -> Unit,
@@ -434,12 +442,14 @@ private fun HistoryRecordCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onSpeak) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = "Volver a decir en voz",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    if (isVoiceEnabled) {
+                        IconButton(onClick = onSpeak) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Volver a decir en voz",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                     IconButton(onClick = onShowFullscreen) {
                         Icon(

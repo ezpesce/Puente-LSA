@@ -437,6 +437,7 @@ fun SignLanguageSelectorSheet(
 fun FullscreenInterlocutorDialog(
     phrase: String,
     languageCode: String,
+    isVoiceEnabled: Boolean = false,
     onSpeak: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -495,19 +496,23 @@ fun FullscreenInterlocutorDialog(
                     modifier = Modifier.padding(horizontal = 8.dp)
                 )
 
-                FilledTonalButton(
-                    onClick = onSpeak,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
-                        .testTag("fullscreen_speak_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = null
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Reproducir voz sintetizada", style = MaterialTheme.typography.labelLarge)
+                if (isVoiceEnabled) {
+                    FilledTonalButton(
+                        onClick = onSpeak,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                            .testTag("fullscreen_speak_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = null
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Reproducir voz sintetizada", style = MaterialTheme.typography.labelLarge)
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
         }

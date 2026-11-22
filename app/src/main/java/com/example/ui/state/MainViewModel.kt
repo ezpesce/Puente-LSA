@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.ai.GestureMotionSample
+import com.example.data.ai.OfflineSignEngine
 import com.example.data.ai.SignAiRepository
 import com.example.data.ai.SignTranslationResult
 import com.example.data.local.AppDatabase
@@ -175,37 +177,81 @@ class MainViewModel(
         hapticManager.trigger(HapticPattern.SIGN_RECOGNIZED, userSettings.value.hapticAlertsEnabled)
     }
 
-    fun analyzeCameraCapture(cameraBitmap: Bitmap? = null) {
+    fun processCapturedSignGesture(
+        frames: List<Bitmap>,
+        motionSamples: List<GestureMotionSample>
+    ) {
         viewModelScope.launch {
+            val peakMotion = motionSamples.maxOfOrNull { it.overallScore } ?: _cameraMotionScore.value
+            if (motionSamples.isNotEmpty() && peakMotion < 0.08f) {
+                _translationState.value = TranslationUiState.Error(
+                    "No se detectó movimiento de seña frente a la cámara. Acercá tus manos e intentá nuevamente."
+                )
+                return@launch
+            }
+
             _translationState.value = TranslationUiState.Analyzing
             val settings = userSettings.value
             val offline = isEffectiveOffline.value
+            val useCloudAi = settings.isAiExtraEnabled && !offline && !aiRepository.requiresFirebaseNotice
             val vocab = learnedVocabulary.value
+
             try {
-                val result = aiRepository.interpretCameraFrame(
-                    cameraBitmap = cameraBitmap,
-                    motionScore = _cameraMotionScore.value,
-                    languageCode = settings.activeSignLanguageCode,
-                    learnedVocabulary = vocab,
-                    isOffline = offline
-                )
+                val result = if (useCloudAi) {
+                    aiRepository.interpretCameraGesture(
+                        frames = frames,
+                        motionSamples = motionSamples,
+                        languageCode = settings.activeSignLanguageCode,
+                        learnedVocabulary = vocab,
+                        isOffline = false
+                    )
+                } else {
+                    OfflineSignEngine.classifyGestureMotion(
+                        motionSamples = if (motionSamples.isNotEmpty()) {
+                            motionSamples
+                        } else {
+                            listOf(
+                                GestureMotionSample(
+                                    overallScore = peakMotion.coerceAtLeast(0.25f),
+                                    upperScore = 0.25f,
+                                    middleScore = 0.2f,
+                                    lowerScore = 0.1f,
+                                    leftScore = 0.2f,
+                                    rightScore = 0.1f
+                                )
+                            )
+                        },
+                        languageCode = settings.activeSignLanguageCode,
+                        vocabulary = vocab
+                    )
+                }
+
                 handleTranslationSuccess(
                     result = result,
-                    sourceMode = when {
-                        offline -> "OFFLINE_ENGINE"
-                        requiresFirebaseAiNotice -> "LOCAL_SAMPLE"
-                        else -> "GEMINI_AI"
-                    },
-                    isOffline = offline
+                    sourceMode = if (useCloudAi) "GEMINI_AI" else "OFFLINE_ENGINE",
+                    isOffline = !useCloudAi
                 )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _translationState.value = TranslationUiState.Error(
-                    e.localizedMessage ?: "No se pudo procesar la captura."
+                    e.localizedMessage ?: "No se pudo procesar la seña."
                 )
             }
         }
+    }
+
+    fun analyzeCameraCapture(cameraBitmap: Bitmap? = null) {
+        val frames = if (cameraBitmap != null) listOf(cameraBitmap) else emptyList()
+        val sample = GestureMotionSample(
+            overallScore = _cameraMotionScore.value.coerceAtLeast(0.22f),
+            upperScore = 0.24f,
+            middleScore = 0.2f,
+            lowerScore = 0.12f,
+            leftScore = 0.2f,
+            rightScore = 0.12f
+        )
+        processCapturedSignGesture(frames = frames, motionSamples = listOf(sample))
     }
 
     fun addGlossToken(glossKey: String) {
@@ -241,21 +287,26 @@ class MainViewModel(
             _translationState.value = TranslationUiState.Analyzing
             val settings = userSettings.value
             val offline = isEffectiveOffline.value
+            val useCloudAi = settings.isAiExtraEnabled && !offline && !aiRepository.requiresFirebaseNotice
             try {
-                val result = aiRepository.refineIdiomaticPhrase(
-                    glossSequence = glosses,
-                    languageCode = settings.activeSignLanguageCode,
-                    learnedVocabulary = learnedVocabulary.value,
-                    isOffline = offline
-                )
+                val result = if (useCloudAi) {
+                    aiRepository.refineIdiomaticPhrase(
+                        glossSequence = glosses,
+                        languageCode = settings.activeSignLanguageCode,
+                        learnedVocabulary = learnedVocabulary.value,
+                        isOffline = false
+                    )
+                } else {
+                    OfflineSignEngine.buildIdiomaticPhrase(
+                        glossKeys = glosses,
+                        languageCode = settings.activeSignLanguageCode,
+                        vocabulary = learnedVocabulary.value
+                    )
+                }
                 handleTranslationSuccess(
                     result = result,
-                    sourceMode = when {
-                        offline -> "OFFLINE_ENGINE"
-                        requiresFirebaseAiNotice -> "LOCAL_SAMPLE"
-                        else -> "GEMINI_COMPOSER"
-                    },
-                    isOffline = offline
+                    sourceMode = if (useCloudAi) "GEMINI_COMPOSER" else "OFFLINE_ENGINE",
+                    isOffline = !useCloudAi
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -301,6 +352,7 @@ class MainViewModel(
         }
 
         val rawGlossString = result.detectedGlosses.joinToString(" + ").ifBlank { "GESTO_LSA" }
+        val shouldSpeakNow = settings.isVoiceExtraEnabled && settings.autoSpeakEnabled
         translationDao.insert(
             TranslationRecordEntity(
                 languageCode = settings.activeSignLanguageCode,
@@ -308,7 +360,7 @@ class MainViewModel(
                 naturalPhrase = result.idiomaticPhrase,
                 sourceMode = sourceMode,
                 confidencePercent = result.confidencePercent,
-                wasSpokenAloud = settings.autoSpeakEnabled,
+                wasSpokenAloud = shouldSpeakNow,
                 isOfflineRecord = isOffline
             )
         )
@@ -322,7 +374,7 @@ class MainViewModel(
                     naturalPhrase = result.idiomaticPhrase,
                     sourceMode = sourceMode,
                     confidencePercent = result.confidencePercent.toLong(),
-                    spokenAloud = settings.autoSpeakEnabled,
+                    spokenAloud = shouldSpeakNow,
                     offlineRecord = false,
                     favorite = false
                 )
@@ -335,7 +387,7 @@ class MainViewModel(
             subtitle = result.idiomaticPhrase
         )
 
-        if (settings.autoSpeakEnabled) {
+        if (shouldSpeakNow) {
             ttsSpeaker.speak(result.idiomaticPhrase, settings.speechRate)
         }
 
@@ -349,14 +401,22 @@ class MainViewModel(
 
     fun speakText(text: String) {
         val settings = userSettings.value
-        ttsSpeaker.speak(text, settings.speechRate)
+        if (settings.isVoiceExtraEnabled) {
+            ttsSpeaker.speak(text, settings.speechRate)
+        }
         hapticManager.trigger(HapticPattern.SIGN_RECOGNIZED, settings.hapticAlertsEnabled)
         wearableManager.mirrorToWearable(
             caption = text,
-            hapticLabel = "Voz sintetizada activa",
+            hapticLabel = if (settings.isVoiceExtraEnabled) "Voz sintetizada activa" else "Subtítulo enviado",
             syncEnabled = settings.wearableSyncEnabled,
             mirrorHaptics = settings.wearableMirrorHaptics
         )
+    }
+
+    fun testVoiceSample() {
+        val settings = userSettings.value
+        if (!settings.isVoiceExtraEnabled) return
+        ttsSpeaker.speak("Hola, la voz sintetizada de Puente LSA está lista.", settings.speechRate)
     }
 
     fun stopSpeaking() {
@@ -622,8 +682,28 @@ class MainViewModel(
         }
     }
 
+    fun setAiExtraEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsRepo.setAiExtraEnabled(enabled)
+        }
+    }
+
+    fun setVoiceExtraEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefsRepo.setVoiceExtraEnabled(enabled)
+            if (!enabled) {
+                ttsSpeaker.stop()
+            }
+        }
+    }
+
     fun setAutoSpeakEnabled(enabled: Boolean) {
-        viewModelScope.launch { prefsRepo.setAutoSpeakEnabled(enabled) }
+        viewModelScope.launch {
+            prefsRepo.setAutoSpeakEnabled(enabled)
+            if (!enabled) {
+                ttsSpeaker.stop()
+            }
+        }
     }
 
     fun setSpeechRate(rate: Float) {
