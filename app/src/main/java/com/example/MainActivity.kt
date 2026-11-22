@@ -210,13 +210,41 @@ fun RootAuthGate(firebaseAuth: FirebaseAuth? = null) {
     }
 
     val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    var continueWithoutCloudAccount by remember { mutableStateOf(false) }
     val user = currentUser
 
-    if (user == null) {
+    if (user == null && !continueWithoutCloudAccount) {
         Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { innerPadding ->
             AuthScreen(
                 onAuthSuccess = { },
+                onContinueWithoutAccount = { continueWithoutCloudAccount = true },
                 modifier = Modifier.padding(innerPadding)
+            )
+        }
+    } else if (user == null) {
+        key("firebase_ai_local_only") {
+            val viewModel: MainViewModel = viewModel(
+                key = "firebase_ai_local_only",
+                factory = viewModelFactory {
+                    initializer {
+                        val app = checkNotNull(this[APPLICATION_KEY])
+                        MainViewModel(
+                            currentUserId = "local_device",
+                            database = AppDatabase.getInstance(app),
+                            prefsRepo = UserPreferencesRepository(app),
+                            aiRepository = GeminiSignAiRepository(),
+                            cloudRepo = CloudSyncRepository(db = null, auth = null),
+                            ttsSpeaker = TtsSpeaker(app),
+                            hapticManager = HapticAlertManager(app),
+                            networkMonitor = NetworkMonitor(app),
+                            wearableManager = WearableSyncManager(app)
+                        )
+                    }
+                }
+            )
+            PuenteLsaApp(
+                viewModel = viewModel,
+                userEmail = "IA activa · Diccionario local"
             )
         }
     } else {

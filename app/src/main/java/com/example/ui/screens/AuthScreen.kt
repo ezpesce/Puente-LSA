@@ -29,6 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -188,6 +189,7 @@ fun signOutFromFirebase(
 @Composable
 fun AuthScreen(
     onAuthSuccess: () -> Unit,
+    onContinueWithoutAccount: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -335,6 +337,19 @@ fun AuthScreen(
                     Icon(imageVector = Icons.Default.Lock, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Continuar con Google", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+
+            if (onContinueWithoutAccount != null) {
+                OutlinedButton(
+                    onClick = onContinueWithoutAccount,
+                    enabled = !isSigningIn,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("continue_without_account_button")
+                ) {
+                    Text("Continuar sin cuenta (solo IA y diccionario local)")
                 }
             }
         }
